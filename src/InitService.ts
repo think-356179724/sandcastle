@@ -341,8 +341,7 @@ interface BaseSandboxProviderEntry {
   readonly importPath: string;
 }
 
-export interface ContainerSandboxProviderEntry
-  extends BaseSandboxProviderEntry {
+export interface ContainerSandboxProviderEntry extends BaseSandboxProviderEntry {
   readonly kind: "container";
   /** Filename written to .sandcastle/ (e.g. "Dockerfile" or "Containerfile") */
   readonly containerfileName: string;
@@ -405,9 +404,15 @@ export function getNextStepsLines(
 ): string[] {
   const noSandboxNote =
     "   No sandbox means the agent runs directly on the host — there is no container isolation.";
+  const withSandboxNote = (lines: string[]): string[] => {
+    if (sandboxProvider.kind === "none") {
+      lines.splice(2, 0, noSandboxNote);
+    }
+    return lines;
+  };
 
   if (template === "blank") {
-    const lines = [
+    return withSandboxNote([
       "Next steps:",
       `1. Set the required env vars in .sandcastle/.env (see .sandcastle/.env.example)`,
       "   If you want to use your Claude subscription instead of an API key, see https://github.com/mattpocock/sandcastle/issues/191",
@@ -415,33 +420,27 @@ export function getNextStepsLines(
       `3. Customize .sandcastle/${mainFilename} — it uses the JS API (\`run()\`) to control how the agent runs`,
       `4. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
       "5. Run `npm run sandcastle` to start the agent",
-    ];
-    if (sandboxProvider.kind === "none") {
-      lines.splice(2, 0, noSandboxNote);
-    }
-    return lines;
-  } else {
-    const hasReviewer = template.includes("review");
-    let step = 1;
-    const lines: string[] = [
-      "Next steps:",
-      `${step++}. Set the required env vars in .sandcastle/.env (see .sandcastle/.env.example)`,
-      "   If you want to use your Claude subscription instead of an API key, see https://github.com/mattpocock/sandcastle/issues/191",
-      `${step++}. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
-      `${step++}. Templates use \`copyToWorktree: ["node_modules"]\` to copy your host node_modules into the sandbox for fast startup — the \`npm install\` in the onSandboxReady hook is a safety net for platform-specific binaries. Adjust both if you use a different package manager`,
-      `${step++}. Read and customize the prompt files in .sandcastle/ — they shape what the agent does`,
-    ];
-    if (sandboxProvider.kind === "none") {
-      lines.splice(2, 0, noSandboxNote);
-    }
-    if (hasReviewer) {
-      lines.push(
-        `${step++}. Customize .sandcastle/CODING_STANDARDS.md with your project's standards — the reviewer agent loads it during review`,
-      );
-    }
-    lines.push(`${step++}. Run \`npm run sandcastle\` to start the agent`);
-    return lines;
+    ]);
   }
+
+  const hasReviewer = template.includes("review");
+  let step = 1;
+  const lines: string[] = withSandboxNote([
+    "Next steps:",
+    `${step++}. Set the required env vars in .sandcastle/.env (see .sandcastle/.env.example)`,
+    "   If you want to use your Claude subscription instead of an API key, see https://github.com/mattpocock/sandcastle/issues/191",
+    `${step++}. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
+    `${step++}. Templates use \`copyToWorktree: ["node_modules"]\` to copy your host node_modules into the sandbox for fast startup — the \`npm install\` in the onSandboxReady hook is a safety net for platform-specific binaries. Adjust both if you use a different package manager`,
+    `${step++}. Read and customize the prompt files in .sandcastle/ — they shape what the agent does`,
+  ]);
+
+  if (hasReviewer) {
+    lines.push(
+      `${step++}. Customize .sandcastle/CODING_STANDARDS.md with your project's standards — the reviewer agent loads it during review`,
+    );
+  }
+  lines.push(`${step++}. Run \`npm run sandcastle\` to start the agent`);
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -770,28 +769,28 @@ export const scaffold = (
     }
     const envExampleContent = envExampleParts.join("\n") + "\n";
 
-    yield* Effect.all(
-      [
+    const scaffoldWrites = [
+      fs
+        .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
+        .pipe(Effect.mapError((e) => new Error(e.message))),
+      fs
+        .writeFileString(join(configDir, ".env.example"), envExampleContent)
+        .pipe(Effect.mapError((e) => new Error(e.message))),
+      copyTemplateFiles(templateDir, configDir, mainFilename),
+    ];
+
+    if (sandboxProvider.kind === "container") {
+      scaffoldWrites.push(
         fs
-          .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
+          .writeFileString(
+            join(configDir, sandboxProvider.containerfileName),
+            agent.dockerfileTemplate,
+          )
           .pipe(Effect.mapError((e) => new Error(e.message))),
-        fs
-          .writeFileString(join(configDir, ".env.example"), envExampleContent)
-          .pipe(Effect.mapError((e) => new Error(e.message))),
-        copyTemplateFiles(templateDir, configDir, mainFilename),
-        ...(sandboxProvider.kind === "container"
-          ? [
-              fs
-                .writeFileString(
-                  join(configDir, sandboxProvider.containerfileName),
-                  agent.dockerfileTemplate,
-                )
-                .pipe(Effect.mapError((e) => new Error(e.message))),
-            ]
-          : []),
-      ],
-      { concurrency: "unbounded" },
-    );
+      );
+    }
+
+    yield* Effect.all(scaffoldWrites, { concurrency: "unbounded" });
 
     // Rewrite main file with the selected agent factory and model
     yield* rewriteMainTs(
