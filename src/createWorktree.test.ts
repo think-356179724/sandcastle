@@ -1,5 +1,5 @@
 import { exec, execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
   type ExecResult,
   type SandboxProvider,
 } from "./SandboxProvider.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 import { makeLocalSandboxLayer } from "./testSandbox.js";
 
 const execAsync = promisify(exec);
@@ -707,6 +708,66 @@ describe("worktree.run()", () => {
       expect(result.commits.length).toBeGreaterThanOrEqual(1);
       expect(result.commits[0]!.sha).toMatch(/^[0-9a-f]{40}$/);
       expect(result.branch).toBe("commits-run-test");
+    } finally {
+      await ws.close();
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts noSandbox(), runs on the worktree branch, and passes skip-permissions to the agent", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "ws-run-nosandbox-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+
+    const binDir = join(hostDir, "bin");
+    await execAsync(`mkdir -p "${binDir}"`);
+    const tracePath = join(hostDir, "agent-argv.txt");
+    const claudePath = join(binDir, "claude");
+
+    await writeFile(
+      claudePath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "$TRACE_FILE"
+echo "agent file" > created-by-agent.txt
+git add created-by-agent.txt
+git commit -m "RALPH: wt.run noSandbox commit" >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
+printf '%s\n' '{"type":"result","result":"done"}'
+`,
+    );
+    chmodSync(claudePath, 0o755);
+
+    const ws = await createWorktree({
+      branchStrategy: { type: "branch", branch: "wt-nosandbox-run-test" },
+      cwd: hostDir,
+    });
+
+    try {
+      const result = await ws.run({
+        agent: claudeCode("test-model", {
+          captureSessions: false,
+        }),
+        sandbox: noSandbox({
+          env: {
+            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            TRACE_FILE: tracePath,
+          },
+        }),
+        prompt: "do work",
+      });
+
+      expect(result.branch).toBe("wt-nosandbox-run-test");
+      expect(result.commits).toHaveLength(1);
+      expect(
+        execSync("git log --oneline -1", {
+          cwd: ws.worktreePath,
+          encoding: "utf-8",
+        }),
+      ).toContain("RALPH: wt.run noSandbox commit");
+
+      const argv = readFileSync(tracePath, "utf-8");
+      expect(argv).toContain("--dangerously-skip-permissions");
     } finally {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
