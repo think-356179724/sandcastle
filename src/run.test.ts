@@ -1,6 +1,7 @@
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCompletionMessage,
@@ -22,6 +23,7 @@ import type { WorktreeInteractiveOptions } from "./createWorktree.js";
 import { defaultImageName } from "./sandboxes/docker.js";
 import * as sandcastle from "./SandboxProvider.js";
 import { createBindMountSandboxProvider } from "./SandboxProvider.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 
 const testSandbox = createBindMountSandboxProvider({
   name: "test",
@@ -33,6 +35,26 @@ const testSandbox = createBindMountSandboxProvider({
     close: async () => {},
   }),
 });
+
+const initRepo = (dir: string) => {
+  execSync("git init -b main", { cwd: dir, stdio: "ignore" });
+  execSync('git config user.email "test@test.com"', {
+    cwd: dir,
+    stdio: "ignore",
+  });
+  execSync('git config user.name "Test"', { cwd: dir, stdio: "ignore" });
+};
+
+const commitFile = (
+  dir: string,
+  name: string,
+  content: string,
+  message: string,
+) => {
+  writeFileSync(join(dir, name), content);
+  execSync(`git add "${name}"`, { cwd: dir, stdio: "ignore" });
+  execSync(`git commit -m "${message}"`, { cwd: dir, stdio: "ignore" });
+};
 
 describe("printFileDisplayStartup", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -478,6 +500,54 @@ describe("branchStrategy on RunOptions", () => {
     ).rejects.toThrow(
       "head branch strategy is not supported with isolated providers",
     );
+  });
+
+  it("accepts noSandbox(), defaults to head, and passes skip-permissions to the agent", async () => {
+    const hostDir = mkdtempSync(join(tmpdir(), "sandcastle-run-nosandbox-"));
+    initRepo(hostDir);
+    commitFile(hostDir, "init.txt", "init", "initial commit");
+
+    const binDir = join(hostDir, "bin");
+    execSync(`mkdir -p "${binDir}"`);
+    const tracePath = join(hostDir, "agent-argv.txt");
+    const claudePath = join(binDir, "claude");
+
+    writeFileSync(
+      claudePath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "$TRACE_FILE"
+echo "agent file" > created-by-agent.txt
+git add created-by-agent.txt
+git commit -m "RALPH: noSandbox run commit" >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
+printf '%s\n' '{"type":"result","result":"done"}'
+`,
+    );
+    chmodSync(claudePath, 0o755);
+
+    const result = await run({
+      agent: claudeCode("test-model", {
+        captureSessions: false,
+      }),
+      sandbox: noSandbox({
+        env: {
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          TRACE_FILE: tracePath,
+        },
+      }),
+      prompt: "do work",
+      cwd: hostDir,
+    });
+
+    expect(result.branch).toBe("main");
+    expect(result.commits).toHaveLength(1);
+    expect(
+      execSync("git log --oneline -1", { cwd: hostDir, encoding: "utf-8" }),
+    ).toContain("RALPH: noSandbox run commit");
+
+    const argv = readFileSync(tracePath, "utf-8");
+    expect(argv).toContain("--dangerously-skip-permissions");
   });
 });
 

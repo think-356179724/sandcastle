@@ -61,6 +61,23 @@ export type WorktreeBranchStrategy =
   | MergeToHeadBranchStrategy
   | NamedBranchStrategy;
 
+const makeIsolatedApplyToHost = (
+  worktreePath: string,
+  handle: IsolatedSandboxHandle,
+) => {
+  let lastSyncedSandboxHead: string | undefined;
+
+  return () =>
+    syncOut(worktreePath, handle, lastSyncedSandboxHead).pipe(
+      Effect.tap((sandboxHead) =>
+        Effect.sync(() => {
+          lastSyncedSandboxHead = sandboxHead;
+        }),
+      ),
+      Effect.asVoid,
+    );
+};
+
 export interface CreateWorktreeOptions {
   /** Branch strategy — only 'branch' and 'merge-to-head' are allowed. */
   readonly branchStrategy: WorktreeBranchStrategy;
@@ -231,7 +248,12 @@ export const createWorktree = async (
       baseBranch,
     });
     if (options.copyToWorktree && options.copyToWorktree.length > 0) {
-      yield* copyToWorktree(options.copyToWorktree, hostRepoDir, info.path, options.timeouts?.copyToWorktreeMs);
+      yield* copyToWorktree(
+        options.copyToWorktree,
+        hostRepoDir,
+        info.path,
+        options.timeouts?.copyToWorktreeMs,
+      );
     }
     // Run host.onWorktreeReady hooks after copyToWorktree, before sandbox creation
     if (options.hooks?.host?.onWorktreeReady?.length) {
@@ -380,7 +402,10 @@ export const createWorktree = async (
 
         const applyToHost =
           resolvedSandbox.tag === "isolated"
-            ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
+            ? makeIsolatedApplyToHost(
+                worktreeInfo.path,
+                handle as IsolatedSandboxHandle,
+              )
             : () => Effect.void;
 
         const lifecycleEffect = withSandboxLifecycle(
@@ -557,7 +582,10 @@ export const createWorktree = async (
       const sandboxLayer = makeSandboxLayerFromHandle(handle);
       const applyToHost =
         sandboxProvider.tag === "isolated"
-          ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
+          ? makeIsolatedApplyToHost(
+              worktreeInfo.path,
+              handle as IsolatedSandboxHandle,
+            )
           : () => Effect.void;
 
       // 5. Resolve logging

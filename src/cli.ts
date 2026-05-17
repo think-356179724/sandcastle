@@ -101,6 +101,13 @@ const initModelOption = Options.text("model").pipe(
   Options.optional,
 );
 
+const forceOption = Options.boolean("force").pipe(
+  Options.withDescription(
+    "Overwrite an existing .sandcastle/ directory without prompting",
+  ),
+  Options.withDefault(false),
+);
+
 const initCommand = Command.make(
   "init",
   {
@@ -108,12 +115,14 @@ const initCommand = Command.make(
     template: templateOption,
     agent: agentOption,
     model: initModelOption,
+    force: forceOption,
   },
   ({
     imageName: imageNameFlag,
     template,
     agent: agentFlag,
     model: modelFlag,
+    force: forceFlag,
   }) =>
     Effect.gen(function* () {
       const d = yield* Display;
@@ -268,6 +277,34 @@ const initCommand = Command.make(
         }
       }
 
+      // Decide whether to overwrite an existing .sandcastle/ directory
+      const fs = yield* FileSystem.FileSystem;
+      const configDirExists = yield* fs
+        .exists(join(cwd, CONFIG_DIR))
+        .pipe(Effect.catchAll(() => Effect.succeed(false)));
+      let shouldOverwrite = false;
+      if (configDirExists) {
+        if (forceFlag) {
+          shouldOverwrite = true;
+        } else {
+          const confirmed = yield* Effect.promise(() =>
+            clack.confirm({
+              message:
+                ".sandcastle/ already exists. Delete it and re-initialize?",
+              initialValue: false,
+            }),
+          );
+          if (clack.isCancel(confirmed) || confirmed !== true) {
+            yield* Effect.fail(
+              new InitError({
+                message: "Init cancelled — .sandcastle/ already exists.",
+              }),
+            );
+          }
+          shouldOverwrite = true;
+        }
+      }
+
       const scaffoldResult = yield* d.spinner(
         "Scaffolding .sandcastle/ config directory...",
         scaffold(cwd, {
@@ -277,6 +314,7 @@ const initCommand = Command.make(
           createLabel: shouldCreateLabel === true,
           backlogManager: selectedBacklogManager,
           sandboxProvider: selectedSandboxProvider,
+          force: shouldOverwrite,
         }).pipe(
           Effect.mapError(
             (e) =>

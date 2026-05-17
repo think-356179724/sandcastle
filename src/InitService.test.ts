@@ -38,6 +38,19 @@ const runScaffold = (repoDir: string, options?: Partial<ScaffoldOptions>) =>
     ),
   );
 
+const expectSandboxProviderRewrite = (
+  mainContent: string,
+  providerName: "docker" | "podman",
+) => {
+  const otherProviderName = providerName === "docker" ? "podman" : "docker";
+  expect(mainContent).toContain(
+    `@ai-hero/sandcastle/sandboxes/${providerName}`,
+  );
+  expect(mainContent).toContain(`sandbox: ${providerName}()`);
+  expect(mainContent).not.toContain(`sandboxes/${otherProviderName}`);
+  expect(mainContent).not.toContain(`sandbox: ${otherProviderName}()`);
+};
+
 // ---------------------------------------------------------------------------
 // Agent registry
 // ---------------------------------------------------------------------------
@@ -219,6 +232,22 @@ describe("InitService scaffold", () => {
     await expect(runScaffold(dir)).rejects.toThrow(
       ".sandcastle/ directory already exists",
     );
+  });
+
+  it("removes an existing .sandcastle/ when force is true", async () => {
+    const dir = await makeDir();
+    const { mkdir, access } = await import("node:fs/promises");
+    const configDir = join(dir, ".sandcastle");
+    await mkdir(configDir);
+    const sentinel = join(configDir, "stale.txt");
+    await writeFile(sentinel, "leftover from a previous init");
+
+    await runScaffold(dir, { force: true });
+
+    // The stale file is gone and a fresh scaffold was written
+    await expect(access(sentinel)).rejects.toThrow();
+    const dockerfile = await readFile(join(configDir, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM node:22-bookworm");
   });
 
   it("includes .env, logs/, and worktrees/ in .gitignore but not patches/", async () => {
@@ -1887,6 +1916,23 @@ describe("InitService scaffold", () => {
       expect(mainContent).toContain("main.ts");
     });
 
+    it("main.ts scaffolded with type: module rewrites sandbox provider to podman", async () => {
+      const dir = await makeDir();
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "test", type: "module" }),
+      );
+      await runScaffold(dir, {
+        sandboxProvider: getSandboxProvider("podman")!,
+      });
+
+      const mainContent = await readFile(
+        join(dir, ".sandcastle", "main.ts"),
+        "utf-8",
+      );
+      expectSandboxProviderRewrite(mainContent, "podman");
+    });
+
     it("scaffolds main.mts when package.json is invalid JSON", async () => {
       const dir = await makeDir();
       await writeFile(join(dir, "package.json"), "not valid json{{{");
@@ -1937,6 +1983,23 @@ describe("InitService scaffold", () => {
         access(join(dir, ".sandcastle", "Dockerfile")),
       ).rejects.toThrow();
     });
+
+    it.each([
+      { providerName: "podman" as const, provider: podmanProvider },
+      { providerName: "docker" as const, provider: dockerProvider },
+    ])(
+      "selecting $providerName rewrites main.mts sandbox provider import and call",
+      async ({ providerName, provider }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, { sandboxProvider: provider });
+
+        const mainContent = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expectSandboxProviderRewrite(mainContent, providerName);
+      },
+    );
 
     it("selecting docker does not write Containerfile", async () => {
       const dir = await makeDir();

@@ -171,11 +171,11 @@ _Avoid_: "template expansion", "interpolation"
 ### Infrastructure
 
 **Build-image**:
-A provider-namespaced CLI command that rebuilds the image (e.g. `sandcastle docker build-image`).
+A provider-namespaced CLI command that rebuilds the image (e.g. `sandcastle docker build-image`). Container **sandbox providers** only -- the **no-sandbox provider** has no image and no **build-image**.
 _Avoid_: "setup-sandbox" (old name)
 
 **Remove-image**:
-A provider-namespaced CLI command that removes the image (e.g. `sandcastle docker remove-image`).
+A provider-namespaced CLI command that removes the image (e.g. `sandcastle docker remove-image`). Container **sandbox providers** only -- not defined for the **no-sandbox provider**.
 _Avoid_: "cleanup-sandbox" (old name)
 
 **Agent session**:
@@ -209,15 +209,17 @@ _Avoid_: "log event" (the log file contains more than just agent output), "displ
 - A **bind-mount sandbox provider** supports all three **branch strategies**: **head** (default), **merge-to-head**, and **branch**
 - An **isolated sandbox provider** supports **merge-to-head** (default) and **branch** only -- **head** is not valid because it cannot write directly to the **host** filesystem
 - An **isolated sandbox provider** handles syncing code in and extracting commits out -- optionally using **bundle/patch sync**. **Isolated sandbox providers are defined in the type system but not yet implemented**
-- A **no-sandbox provider** supports all three **branch strategies** (default: **head**). It is only accepted by `interactive()`, not `run()` -- enforced at the type level. The **agent provider** does not receive `dangerouslySkipPermissions: true`
-- `interactive()` accepts all three **sandbox provider** types; `run()` accepts only **bind-mount** and **isolated**
-- `createSandbox()` does not accept a **no-sandbox provider**
+- A **no-sandbox provider** supports all three **branch strategies** (default: **head**, same as bind-mount). It is accepted by every entry point: `interactive()`, `run()`, `createSandbox()`, `sandbox.run()`, and `wt.run()` -- there is no type-level or runtime restriction distinguishing it from **bind-mount** / **isolated** providers
+- In every **AFK** entry point (`run()`, `createSandbox()` / `sandbox.run()`, `wt.run()`) the **agent provider** receives `dangerouslySkipPermissions: true` regardless of which **sandbox provider** is used -- including **no-sandbox** -- because an unsupervised **agent** has nobody to approve permission prompts. Only in `interactive()` does the **no-sandbox provider** withhold `--dangerously-skip-permissions` (the user approves permissions themselves)
+- `interactive()`, `run()`, and `createSandbox()` all accept every **sandbox provider** type, including **no-sandbox**
+- **No-sandbox + AFK trades away all isolation**: an unsupervised **agent** runs directly on the **host** with permission prompts skipped and (by default) writes directly to the working directory via the **head** strategy. A prompt injection from an untrusted **task** source can reach **host** credentials with nothing to stop it -- there is no container boundary, unlike the **bind-mount** path. This combination is a deliberate decision to support environments with no container runtime; see [ADR 0015](docs/adr/0015-no-sandbox-allowed-for-afk.md)
 - **Sandbox providers** are imported from subpaths (e.g. `sandcastle/sandboxes/docker`) -- the main `sandcastle` entry point does not re-export any provider
 - **Host hooks** run on the **host**; **sandbox hooks** run inside the **sandbox**. Hooks are grouped under `host` and `sandbox` in the `hooks` option
 - Lifecycle ordering: `copyToWorktree` -> `host.onWorktreeReady` (sequential) -> sandbox created -> `host.onSandboxReady` + `sandbox.onSandboxReady` (parallel)
 - Each **iteration** may produce one or more commits; iterations repeat until the **completion signal** fires or the max count is reached
-- **Init** creates the **config directory** on the **host**, prompting the user to select an **agent** and **backlog manager**
-- **Init** performs **template argument substitution** on Dockerfiles and scaffold `.md` files, replacing **template arguments** with values derived from the user's choices
+- **Init** creates the **config directory** on the **host**, prompting the user to select an **agent**, a **sandbox provider**, and a **backlog manager** (the **sandbox provider** is also settable non-interactively via `--sandbox`)
+- When the selected **sandbox provider** is **no-sandbox**, **Init** writes no Dockerfile/Containerfile and there is no **build-image** / **remove-image** step -- the scaffolded entrypoint imports `noSandbox()` and runs the **agent** directly on the **host**. See [ADR 0016](docs/adr/0016-init-supports-no-sandbox.md)
+- **Init** performs **template argument substitution** on Dockerfiles (when one is written) and scaffold `.md` files, replacing **template arguments** with values derived from the user's choices
 - Each **backlog manager** declares a Dockerfile snippet (installed via **template argument substitution**) and command placeholders for **prompt** templates
 - The **agent**'s Dockerfile template contains **template arguments** (e.g. `{{BACKLOG_MANAGER_TOOLS}}`) that **init** fills in based on the selected **backlog manager**
 - **Build-image** and **remove-image** are namespaced under their provider in the CLI (e.g. `sandcastle docker build-image`)
@@ -272,7 +274,7 @@ _Avoid_: "log event" (the log file contains more than just agent output), "displ
 
 > **Dev:** "What about using `noSandbox()` with `run()` for an AFK job?"
 
-> **Domain expert:** "That's not allowed -- `run()` doesn't accept a **no-sandbox provider**. This is enforced at the type level. AFK means unsupervised, so you need a real **sandbox** for isolation."
+> **Domain expert:** "That's allowed -- `run()` accepts the **no-sandbox provider** too, same as `createSandbox()` and `wt.run()`. But know what you're signing up for: the **agent** runs unsupervised, directly on the **host**, with `--dangerously-skip-permissions`, and (by default) writes straight to your working directory. There's no container boundary to contain a prompt injection from your **task** source. Do this only where you have no container runtime available and you trust the task source. See [ADR 0015](../docs/adr/0015-no-sandbox-allowed-for-afk.md)."
 
 ### Prompt system
 

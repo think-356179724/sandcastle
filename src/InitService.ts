@@ -74,7 +74,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 USER \${AGENT_UID}:\${AGENT_GID}
 
 # Install Claude Code CLI
@@ -109,7 +114,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 
 # Install pi coding agent (run as root before USER agent)
 RUN npm install -g @mariozechner/pi-coding-agent
@@ -142,7 +152,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 
 # Install Codex CLI (run as root before USER agent)
 RUN npm install -g @openai/codex
@@ -175,7 +190,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 
 # Install OpenCode CLI (run as root before USER agent)
 RUN npm install -g opencode-ai@latest
@@ -315,6 +335,10 @@ export const getAgent = (name: string): AgentEntry | undefined =>
 export interface SandboxProviderEntry {
   readonly name: string;
   readonly label: string;
+  /** Factory imported into scaffolded main files (e.g. "docker" or "podman") */
+  readonly factoryImport: string;
+  /** Import path for the sandbox factory in scaffolded main files. */
+  readonly importPath: string;
   /** Filename written to .sandcastle/ (e.g. "Dockerfile" or "Containerfile") */
   readonly containerfileName: string;
   /** CLI namespace for build/remove commands (e.g. "docker" or "podman") */
@@ -325,12 +349,16 @@ const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
   {
     name: "docker",
     label: "Docker",
+    factoryImport: "docker",
+    importPath: "@ai-hero/sandcastle/sandboxes/docker",
     containerfileName: "Dockerfile",
     cliNamespace: "docker",
   },
   {
     name: "podman",
     label: "Podman",
+    factoryImport: "podman",
+    importPath: "@ai-hero/sandcastle/sandboxes/podman",
     containerfileName: "Containerfile",
     cliNamespace: "podman",
   },
@@ -445,6 +473,47 @@ const copyTemplateFiles = (
     );
   });
 
+const DOCKER_IMPORT_RE = /import\s+\{\s*docker\s*\}\s+from\s+["'][^"']+["'];?/g;
+const DOCKER_FACTORY_CALL_RE = /\bdocker\(\)/g;
+
+const rewriteMainFilenameReferences = (
+  content: string,
+  mainFilename: string,
+): string =>
+  mainFilename === "main.ts"
+    ? content.replace(/main\.mts/g, "main.ts")
+    : content;
+
+const rewriteAgentFactory = (
+  content: string,
+  agent: AgentEntry,
+  model: string,
+): string => {
+  const updatedContent = content.replace(
+    /\bclaudeCode\b/g,
+    agent.factoryImport,
+  );
+  const factoryCallRe = new RegExp(
+    `${agent.factoryImport}\\(["']([^"']+)["']\\)`,
+    "g",
+  );
+  return updatedContent.replace(
+    factoryCallRe,
+    `${agent.factoryImport}("${model}")`,
+  );
+};
+
+const rewriteSandboxProviderFactory = (
+  content: string,
+  sandboxProvider: SandboxProviderEntry,
+): string =>
+  content
+    .replace(
+      DOCKER_IMPORT_RE,
+      `import { ${sandboxProvider.factoryImport} } from "${sandboxProvider.importPath}";`,
+    )
+    .replace(DOCKER_FACTORY_CALL_RE, `${sandboxProvider.factoryImport}()`);
+
 /**
  * Replace the agent factory import and call in a scaffolded main.ts.
  *
@@ -455,6 +524,7 @@ const rewriteMainTs = (
   configDir: string,
   agent: AgentEntry,
   model: string,
+  sandboxProvider: SandboxProviderEntry,
   mainFilename: string,
 ): Effect.Effect<void, Error, FileSystem.FileSystem> =>
   Effect.gen(function* () {
@@ -470,25 +540,9 @@ const rewriteMainTs = (
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
-    // Templates use main.mts as the canonical filename in comments.
-    // When the target is main.ts, rewrite those references.
-    if (mainFilename === "main.ts") {
-      content = content.replace(/main\.mts/g, "main.ts");
-    }
-
-    // Replace factory function name in imports (e.g. claudeCode → pi)
-    // and all factory calls with the correct model.
-    // Templates always use claudeCode as the placeholder factory.
-    content = content.replace(/\bclaudeCode\b/g, agent.factoryImport);
-    // Replace model strings in factory calls: factoryImport("any-model")
-    const factoryCallRe = new RegExp(
-      `${agent.factoryImport}\\(["']([^"']+)["']\\)`,
-      "g",
-    );
-    content = content.replace(
-      factoryCallRe,
-      `${agent.factoryImport}("${model}")`,
-    );
+    content = rewriteMainFilenameReferences(content, mainFilename);
+    content = rewriteAgentFactory(content, agent, model);
+    content = rewriteSandboxProviderFactory(content, sandboxProvider);
 
     yield* fs
       .writeFileString(mainTsPath, content)
@@ -601,6 +655,8 @@ export interface ScaffoldOptions {
   createLabel?: boolean;
   backlogManager?: BacklogManagerEntry;
   sandboxProvider?: SandboxProviderEntry;
+  /** When true, delete an existing `.sandcastle/` directory instead of failing. */
+  force?: boolean;
 }
 
 export interface ScaffoldResult {
@@ -644,6 +700,7 @@ export const scaffold = (
       createLabel = true,
       backlogManager = BACKLOG_MANAGER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
+      force = false,
     } = options;
     const fs = yield* FileSystem.FileSystem;
     const configDir = join(repoDir, ".sandcastle");
@@ -652,11 +709,17 @@ export const scaffold = (
       .exists(configDir)
       .pipe(Effect.mapError((e) => new Error(e.message)));
     if (exists) {
-      yield* Effect.fail(
-        new Error(
-          ".sandcastle/ directory already exists. Remove it first if you want to re-initialize.",
-        ),
-      );
+      if (force) {
+        yield* fs
+          .remove(configDir, { recursive: true, force: true })
+          .pipe(Effect.mapError((e) => new Error(e.message)));
+      } else {
+        yield* Effect.fail(
+          new Error(
+            ".sandcastle/ directory already exists. Remove it first if you want to re-initialize.",
+          ),
+        );
+      }
     }
 
     const mainFilename = yield* detectMainFilename(repoDir);
@@ -694,7 +757,13 @@ export const scaffold = (
     );
 
     // Rewrite main file with the selected agent factory and model
-    yield* rewriteMainTs(configDir, agent, model, mainFilename);
+    yield* rewriteMainTs(
+      configDir,
+      agent,
+      model,
+      sandboxProvider,
+      mainFilename,
+    );
 
     // Replace backlog manager template arguments in all text files (must run before label stripping)
     yield* substituteTemplateArgs(configDir, backlogManager);
