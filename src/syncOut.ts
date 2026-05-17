@@ -164,7 +164,8 @@ const createPatchDir = (
 export const syncOut = (
   hostRepoDir: string,
   handle: IsolatedSandboxHandle,
-): Effect.Effect<void, SyncError> =>
+  sandboxBaseRef?: string,
+): Effect.Effect<string, SyncError> =>
   Effect.gen(function* () {
     const worktreePath = handle.worktreePath;
 
@@ -175,8 +176,9 @@ export const syncOut = (
     const sandboxHead = (yield* execOk(handle, "git rev-parse HEAD", {
       cwd: worktreePath,
     })).stdout.trim();
+    const patchBaseRef = sandboxBaseRef ?? hostHead;
 
-    const hasCommits = hostHead !== sandboxHead;
+    const hasCommits = patchBaseRef !== sandboxHead;
 
     // Check for uncommitted changes
     const diffResult = yield* execSandbox(handle, "git diff HEAD", {
@@ -203,7 +205,7 @@ export const syncOut = (
 
     // Nothing to sync
     if (!hasCommits && !hasDiff && !hasUntracked) {
-      return;
+      return sandboxHead;
     }
 
     // --- Phase 1: Save all artifacts ---
@@ -223,7 +225,7 @@ export const syncOut = (
       try {
         yield* execOk(
           handle,
-          `git format-patch "${hostHead}..HEAD" -o "${sandboxPatchDir}"`,
+          `git format-patch "${patchBaseRef}..HEAD" -o "${sandboxPatchDir}"`,
           { cwd: worktreePath },
         );
 
@@ -369,4 +371,6 @@ export const syncOut = (
           new SyncError({ message: "Failed to clean up patch directory" }),
       });
     }
+
+    return sandboxHead;
   });

@@ -352,6 +352,23 @@ const createNoSandboxHandle = (
     })),
   );
 
+const makeIsolatedApplyToHost = (
+  hostWorktreePath: string,
+  handle: IsolatedSandboxHandle,
+): (() => Effect.Effect<void, SyncError>) => {
+  let lastSyncedSandboxHead: string | undefined;
+
+  return () =>
+    syncOut(hostWorktreePath, handle, lastSyncedSandboxHead).pipe(
+      Effect.tap((sandboxHead) =>
+        Effect.sync(() => {
+          lastSyncedSandboxHead = sandboxHead;
+        }),
+      ),
+      Effect.asVoid,
+    );
+};
+
 export const WorktreeDockerSandboxFactory = {
   layer: Layer.effect(
     SandboxFactory,
@@ -442,8 +459,10 @@ export const WorktreeDockerSandboxFactory = {
                 makeEffect({
                   hostWorktreePath: worktreeInfo.path,
                   sandboxRepoPath: worktreePath,
-                  applyToHost: () =>
-                    syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle),
+                  applyToHost: makeIsolatedApplyToHost(
+                    worktreeInfo.path,
+                    handle as IsolatedSandboxHandle,
+                  ),
                 }).pipe(Effect.provide(sandboxLayer)) as Effect.Effect<
                   A,
                   E | SandboxError,

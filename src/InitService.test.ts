@@ -234,6 +234,22 @@ describe("InitService scaffold", () => {
     );
   });
 
+  it("removes an existing .sandcastle/ when force is true", async () => {
+    const dir = await makeDir();
+    const { mkdir, access } = await import("node:fs/promises");
+    const configDir = join(dir, ".sandcastle");
+    await mkdir(configDir);
+    const sentinel = join(configDir, "stale.txt");
+    await writeFile(sentinel, "leftover from a previous init");
+
+    await runScaffold(dir, { force: true });
+
+    // The stale file is gone and a fresh scaffold was written
+    await expect(access(sentinel)).rejects.toThrow();
+    const dockerfile = await readFile(join(configDir, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM node:22-bookworm");
+  });
+
   it("includes .env, logs/, and worktrees/ in .gitignore but not patches/", async () => {
     const dir = await makeDir();
     await runScaffold(dir);

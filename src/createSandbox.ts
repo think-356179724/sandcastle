@@ -494,6 +494,23 @@ const buildSandboxHandle = (
   return sandboxHandle;
 };
 
+const makeIsolatedApplyToHost = (
+  worktreePath: string,
+  handle: IsolatedSandboxHandle,
+) => {
+  let lastSyncedSandboxHead: string | undefined;
+
+  return () =>
+    syncOut(worktreePath, handle, lastSyncedSandboxHead).pipe(
+      Effect.tap((sandboxHead) =>
+        Effect.sync(() => {
+          lastSyncedSandboxHead = sandboxHead;
+        }),
+      ),
+      Effect.asVoid,
+    );
+};
+
 /** @internal Options for createSandboxFromWorktree — used by worktree.createSandbox(). */
 export interface CreateSandboxFromWorktreeOptions {
   readonly branch: string;
@@ -528,7 +545,12 @@ export const createSandboxFromWorktree = async (
     options.sandbox.tag !== "isolated"
   ) {
     await Effect.runPromise(
-      copyToWorktree(options.copyToWorktree, hostRepoDir, worktreePath, options.timeouts?.copyToWorktreeMs),
+      copyToWorktree(
+        options.copyToWorktree,
+        hostRepoDir,
+        worktreePath,
+        options.timeouts?.copyToWorktreeMs,
+      ),
     );
   }
 
@@ -572,7 +594,11 @@ export const createSandboxFromWorktree = async (
         Effect.flatMap((gitMounts) =>
           Effect.tryPromise({
             try: () =>
-              patchGitMountsForWindows(gitMounts, worktreePath, SANDBOX_REPO_DIR),
+              patchGitMountsForWindows(
+                gitMounts,
+                worktreePath,
+                SANDBOX_REPO_DIR,
+              ),
             catch: (e) =>
               new Error(
                 `Failed to patch git mounts: ${e instanceof Error ? e.message : String(e)}`,
@@ -633,7 +659,10 @@ export const createSandboxFromWorktree = async (
   // 4. Build applyToHost callback
   const applyToHost =
     isIsolated && providerHandle
-      ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+      ? makeIsolatedApplyToHost(
+          worktreePath,
+          providerHandle as IsolatedSandboxHandle,
+        )
       : () => Effect.void;
 
   // 5. Build and return sandbox handle — container-only close (worktree owns worktree)
@@ -693,7 +722,12 @@ export const createSandbox = async (
     options.sandbox.tag !== "isolated"
   ) {
     await Effect.runPromise(
-      copyToWorktree(options.copyToWorktree, hostRepoDir, worktreePath, options.timeouts?.copyToWorktreeMs),
+      copyToWorktree(
+        options.copyToWorktree,
+        hostRepoDir,
+        worktreePath,
+        options.timeouts?.copyToWorktreeMs,
+      ),
     );
   }
 
@@ -745,7 +779,11 @@ export const createSandbox = async (
         Effect.flatMap((gitMounts) =>
           Effect.tryPromise({
             try: () =>
-              patchGitMountsForWindows(gitMounts, worktreePath, SANDBOX_REPO_DIR),
+              patchGitMountsForWindows(
+                gitMounts,
+                worktreePath,
+                SANDBOX_REPO_DIR,
+              ),
             catch: (e) =>
               new Error(
                 `Failed to patch git mounts: ${e instanceof Error ? e.message : String(e)}`,
@@ -808,7 +846,10 @@ export const createSandbox = async (
   // 5. Build applyToHost callback (once, reused across runs)
   const applyToHost =
     isIsolated && providerHandle
-      ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+      ? makeIsolatedApplyToHost(
+          worktreePath,
+          providerHandle as IsolatedSandboxHandle,
+        )
       : () => Effect.void;
 
   // 6. Set up signal handlers

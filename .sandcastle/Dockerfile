@@ -22,16 +22,35 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
+
+# Install Codex CLI (run as root before USER agent)
+RUN npm install -g @openai/codex
+
 USER ${AGENT_UID}:${AGENT_GID}
 
-# Install Claude Code CLI
-RUN curl -fsSL https://claude.ai/install.sh | bash
-
-# Add Claude to PATH
-ENV PATH="/home/agent/.local/bin:$PATH"
-
 WORKDIR /home/agent
+
+# Point Codex at the third-party relay (Upthos) via the Responses API.
+# The API key itself is NOT baked in here — Sandcastle injects it at runtime
+# through the OPENAI_API_KEY env var (declared in .sandcastle/.env), which the
+# `env_key` setting below tells Codex to read.
+RUN mkdir -p /home/agent/.codex && \
+  cat > /home/agent/.codex/config.toml <<'EOF'
+model = "gpt-5.5"
+model_provider = "relay"
+
+[model_providers.relay]
+name = "Upthos Relay"
+base_url = "https://relay.upthos.com/v1"
+wire_api = "responses"
+env_key = "OPENAI_API_KEY"
+EOF
 
 # In worktree sandbox mode, Sandcastle bind-mounts the git worktree at /home/agent/workspace
 # and overrides the working directory to /home/agent/workspace at container start.

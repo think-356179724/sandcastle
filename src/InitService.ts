@@ -74,7 +74,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 USER \${AGENT_UID}:\${AGENT_GID}
 
 # Install Claude Code CLI
@@ -109,7 +114,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 
 # Install pi coding agent (run as root before USER agent)
 RUN npm install -g @mariozechner/pi-coding-agent
@@ -142,7 +152,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 
 # Install Codex CLI (run as root before USER agent)
 RUN npm install -g @openai/codex
@@ -175,7 +190,12 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
 # Rename the base image's "node" user to "agent" and align UID/GID.
-RUN groupmod -g $AGENT_GID node && usermod -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node
+# If a group with the target GID already exists (e.g. macOS hosts where the
+# user's primary group is staff/GID 20, which collides with Debian's dialout),
+# skip the groupmod and just point the user at that existing GID.
+RUN set -eux; \\
+  if ! getent group "$AGENT_GID" >/dev/null; then groupmod -g "$AGENT_GID" node; fi; \\
+  usermod -u "$AGENT_UID" -g "$AGENT_GID" -d /home/agent -m -l agent node
 
 # Install OpenCode CLI (run as root before USER agent)
 RUN npm install -g opencode-ai@latest
@@ -635,6 +655,8 @@ export interface ScaffoldOptions {
   createLabel?: boolean;
   backlogManager?: BacklogManagerEntry;
   sandboxProvider?: SandboxProviderEntry;
+  /** When true, delete an existing `.sandcastle/` directory instead of failing. */
+  force?: boolean;
 }
 
 export interface ScaffoldResult {
@@ -678,6 +700,7 @@ export const scaffold = (
       createLabel = true,
       backlogManager = BACKLOG_MANAGER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
+      force = false,
     } = options;
     const fs = yield* FileSystem.FileSystem;
     const configDir = join(repoDir, ".sandcastle");
@@ -686,11 +709,17 @@ export const scaffold = (
       .exists(configDir)
       .pipe(Effect.mapError((e) => new Error(e.message)));
     if (exists) {
-      yield* Effect.fail(
-        new Error(
-          ".sandcastle/ directory already exists. Remove it first if you want to re-initialize.",
-        ),
-      );
+      if (force) {
+        yield* fs
+          .remove(configDir, { recursive: true, force: true })
+          .pipe(Effect.mapError((e) => new Error(e.message)));
+      } else {
+        yield* Effect.fail(
+          new Error(
+            ".sandcastle/ directory already exists. Remove it first if you want to re-initialize.",
+          ),
+        );
+      }
     }
 
     const mainFilename = yield* detectMainFilename(repoDir);

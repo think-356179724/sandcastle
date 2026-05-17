@@ -83,6 +83,11 @@ describe("sandcastle CLI", () => {
     expect(stdout).toContain("--model");
   });
 
+  it("init --help exposes --force flag", async () => {
+    const { stdout } = await runCli("init --help", process.cwd());
+    expect(stdout).toContain("--force");
+  });
+
   it("init --template nonexistent produces error listing available templates", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);

@@ -101,6 +101,38 @@ describe("syncOut", () => {
     }
   });
 
+  it("supports sequential sync-out calls when prior commits were already applied", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "host-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "initial.txt", "initial", "initial commit");
+
+    const provider = testIsolated();
+    const handle = await provider.create({ env: {} });
+    try {
+      await Effect.runPromise(syncIn(hostDir, handle));
+
+      const wp = handle.worktreePath;
+      await handle.exec('echo "one" > one.txt', { cwd: wp });
+      await handle.exec("git add one.txt", { cwd: wp });
+      await handle.exec('git commit -m "add one"', { cwd: wp });
+
+      const firstSyncedHead = await Effect.runPromise(syncOut(hostDir, handle));
+
+      await handle.exec('echo "two" > two.txt', { cwd: wp });
+      await handle.exec("git add two.txt", { cwd: wp });
+      await handle.exec('git commit -m "add two"', { cwd: wp });
+
+      await Effect.runPromise(syncOut(hostDir, handle, firstSyncedHead));
+
+      const log = await getLog(hostDir);
+      expect(log).toHaveLength(3);
+      expect(log[0]).toContain("add two");
+      expect(log[1]).toContain("add one");
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("is a no-op when sandbox has no new commits", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "host-"));
     await initRepo(hostDir);
