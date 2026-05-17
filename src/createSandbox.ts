@@ -45,6 +45,7 @@ import type {
   SandboxProvider,
   BindMountSandboxHandle,
   IsolatedSandboxHandle,
+  NoSandboxProvider,
   NoSandboxHandle,
 } from "./SandboxProvider.js";
 import { startSandbox } from "./startSandbox.js";
@@ -194,6 +195,15 @@ interface SandboxHandleContext {
     | NoSandboxHandle
     | undefined;
   readonly applyToHost: () => Effect.Effect<void, any>;
+}
+
+interface StartedSandbox {
+  readonly handle:
+    | BindMountSandboxHandle
+    | IsolatedSandboxHandle
+    | NoSandboxHandle;
+  readonly sandboxLayer: Layer.Layer<SandboxTag>;
+  readonly worktreePath: string;
 }
 
 /**
@@ -517,9 +527,9 @@ const makeIsolatedApplyToHost = (
 
 const createNoSandboxHandle = async (
   worktreePath: string,
-  sandboxProvider: Extract<AnySandboxProvider, { tag: "none" }>,
+  sandboxProvider: NoSandboxProvider,
   env: Record<string, string>,
-) => {
+): Promise<StartedSandbox> => {
   const handle = await sandboxProvider.create({
     worktreePath,
     env,
@@ -530,6 +540,60 @@ const createNoSandboxHandle = async (
     sandboxLayer: makeSandboxLayerFromHandle(handle),
     worktreePath: handle.worktreePath,
   };
+};
+
+const startCreateSandboxProvider = async (options: {
+  readonly provider: AnySandboxProvider;
+  readonly hostRepoDir: string;
+  readonly worktreePath: string;
+  readonly env: Record<string, string>;
+  readonly copyToWorktree?: string[];
+}): Promise<StartedSandbox> => {
+  const { provider, hostRepoDir, worktreePath, env, copyToWorktree } = options;
+
+  if (provider.tag === "none") {
+    return createNoSandboxHandle(worktreePath, provider, env);
+  }
+
+  const startEffect =
+    provider.tag === "isolated"
+      ? startSandbox({
+          provider,
+          hostRepoDir: worktreePath,
+          env,
+          copyPaths: copyToWorktree,
+        })
+      : resolveGitMounts(join(hostRepoDir, ".git")).pipe(
+          Effect.provide(NodeFileSystem.layer),
+          Effect.catchAll(() => Effect.succeed([])),
+          // Patch git mounts for Windows worktree compatibility (ADR-0006)
+          Effect.flatMap((gitMounts) =>
+            Effect.tryPromise({
+              try: () =>
+                patchGitMountsForWindows(
+                  gitMounts,
+                  worktreePath,
+                  SANDBOX_REPO_DIR,
+                ),
+              catch: (e) =>
+                new Error(
+                  `Failed to patch git mounts: ${e instanceof Error ? e.message : String(e)}`,
+                ),
+            }),
+          ),
+          Effect.flatMap((gitMounts) =>
+            startSandbox({
+              provider,
+              hostRepoDir,
+              env,
+              worktreeOrRepoPath: worktreePath,
+              gitMounts,
+              repoDir: SANDBOX_REPO_DIR,
+            }),
+          ),
+        );
+
+  return Effect.runPromise(startEffect);
 };
 
 /** @internal Options for createSandboxFromWorktree — used by worktree.createSandbox(). */
@@ -765,8 +829,8 @@ export const createSandbox = async (
     | IsolatedSandboxHandle
     | NoSandboxHandle
     | undefined;
-  let sandboxLayer!: Layer.Layer<SandboxTag>;
-  let sandboxRepoDir!: string;
+  let sandboxLayer: Layer.Layer<SandboxTag>;
+  let sandboxRepoDir: string;
   const isIsolated = options.sandbox.tag === "isolated";
 
   if (isTestMode) {
@@ -783,65 +847,17 @@ export const createSandbox = async (
       sandboxProviderEnv: options.sandbox.env,
     });
 
-    const provider = options.sandbox;
+    const startResult = await startCreateSandboxProvider({
+      provider: options.sandbox,
+      hostRepoDir,
+      worktreePath,
+      env,
+      copyToWorktree: options.copyToWorktree,
+    });
 
-    let startEffect;
-    if (provider.tag === "isolated") {
-      startEffect = startSandbox({
-        provider,
-        hostRepoDir: worktreePath,
-        env,
-        copyPaths: options.copyToWorktree,
-      });
-    } else if (provider.tag === "none") {
-      const startResult = await createNoSandboxHandle(
-        worktreePath,
-        provider,
-        env,
-      );
-      providerHandle = startResult.handle;
-      sandboxLayer = startResult.sandboxLayer;
-      sandboxRepoDir = startResult.worktreePath;
-      startEffect = undefined;
-    } else {
-      startEffect = resolveGitMounts(join(hostRepoDir, ".git")).pipe(
-        Effect.provide(NodeFileSystem.layer),
-        Effect.catchAll(() => Effect.succeed([])),
-        // Patch git mounts for Windows worktree compatibility (ADR-0006)
-        Effect.flatMap((gitMounts) =>
-          Effect.tryPromise({
-            try: () =>
-              patchGitMountsForWindows(
-                gitMounts,
-                worktreePath,
-                SANDBOX_REPO_DIR,
-              ),
-            catch: (e) =>
-              new Error(
-                `Failed to patch git mounts: ${e instanceof Error ? e.message : String(e)}`,
-              ),
-          }),
-        ),
-        Effect.flatMap((gitMounts) =>
-          startSandbox({
-            provider,
-            hostRepoDir,
-            env,
-            worktreeOrRepoPath: worktreePath,
-            gitMounts,
-            repoDir: SANDBOX_REPO_DIR,
-          }),
-        ),
-      );
-    }
-
-    if (startEffect) {
-      const startResult = await Effect.runPromise(startEffect);
-
-      providerHandle = startResult.handle;
-      sandboxLayer = startResult.sandboxLayer;
-      sandboxRepoDir = startResult.worktreePath;
-    }
+    providerHandle = startResult.handle;
+    sandboxLayer = startResult.sandboxLayer;
+    sandboxRepoDir = startResult.worktreePath;
   }
 
   // 4. Run onSandboxReady hooks (sandbox-side and host-side in parallel)
