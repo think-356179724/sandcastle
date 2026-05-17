@@ -1887,6 +1887,26 @@ describe("InitService scaffold", () => {
       expect(mainContent).toContain("main.ts");
     });
 
+    it("main.ts scaffolded with type: module rewrites sandbox provider correctly", async () => {
+      const dir = await makeDir();
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "test", type: "module" }),
+      );
+      await runScaffold(dir, {
+        sandboxProvider: getSandboxProvider("podman")!,
+      });
+
+      const mainContent = await readFile(
+        join(dir, ".sandcastle", "main.ts"),
+        "utf-8",
+      );
+      expect(mainContent).toContain("@ai-hero/sandcastle/sandboxes/podman");
+      expect(mainContent).toContain("sandbox: podman()");
+      expect(mainContent).not.toContain("sandboxes/docker");
+      expect(mainContent).not.toContain("sandbox: docker()");
+    });
+
     it("scaffolds main.mts when package.json is invalid JSON", async () => {
       const dir = await makeDir();
       await writeFile(join(dir, "package.json"), "not valid json{{{");
@@ -1936,6 +1956,34 @@ describe("InitService scaffold", () => {
       await expect(
         access(join(dir, ".sandcastle", "Dockerfile")),
       ).rejects.toThrow();
+    });
+
+    it("selecting podman rewrites main.mts to import and call podman()", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { sandboxProvider: podmanProvider });
+
+      const mainContent = await readFile(
+        join(dir, ".sandcastle", "main.mts"),
+        "utf-8",
+      );
+      expect(mainContent).toContain("@ai-hero/sandcastle/sandboxes/podman");
+      expect(mainContent).toContain("sandbox: podman()");
+      expect(mainContent).not.toContain("sandboxes/docker");
+      expect(mainContent).not.toContain("sandbox: docker()");
+    });
+
+    it("selecting docker keeps main.mts importing and calling docker()", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { sandboxProvider: dockerProvider });
+
+      const mainContent = await readFile(
+        join(dir, ".sandcastle", "main.mts"),
+        "utf-8",
+      );
+      expect(mainContent).toContain("@ai-hero/sandcastle/sandboxes/docker");
+      expect(mainContent).toContain("sandbox: docker()");
+      expect(mainContent).not.toContain("sandboxes/podman");
+      expect(mainContent).not.toContain("sandbox: podman()");
     });
 
     it("selecting docker does not write Containerfile", async () => {

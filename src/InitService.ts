@@ -315,6 +315,10 @@ export const getAgent = (name: string): AgentEntry | undefined =>
 export interface SandboxProviderEntry {
   readonly name: string;
   readonly label: string;
+  /** Factory imported into scaffolded main files (e.g. "docker" or "podman") */
+  readonly factoryImport: string;
+  /** Import path for the sandbox factory in scaffolded main files. */
+  readonly importPath: string;
   /** Filename written to .sandcastle/ (e.g. "Dockerfile" or "Containerfile") */
   readonly containerfileName: string;
   /** CLI namespace for build/remove commands (e.g. "docker" or "podman") */
@@ -325,12 +329,16 @@ const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
   {
     name: "docker",
     label: "Docker",
+    factoryImport: "docker",
+    importPath: "@ai-hero/sandcastle/sandboxes/docker",
     containerfileName: "Dockerfile",
     cliNamespace: "docker",
   },
   {
     name: "podman",
     label: "Podman",
+    factoryImport: "podman",
+    importPath: "@ai-hero/sandcastle/sandboxes/podman",
     containerfileName: "Containerfile",
     cliNamespace: "podman",
   },
@@ -455,6 +463,7 @@ const rewriteMainTs = (
   configDir: string,
   agent: AgentEntry,
   model: string,
+  sandboxProvider: SandboxProviderEntry,
   mainFilename: string,
 ): Effect.Effect<void, Error, FileSystem.FileSystem> =>
   Effect.gen(function* () {
@@ -488,6 +497,16 @@ const rewriteMainTs = (
     content = content.replace(
       factoryCallRe,
       `${agent.factoryImport}("${model}")`,
+    );
+
+    // Templates always use docker() as the sandbox provider placeholder.
+    content = content.replace(
+      /import\s+\{\s*docker\s*\}\s+from\s+["'][^"']+["'];?/g,
+      `import { ${sandboxProvider.factoryImport} } from "${sandboxProvider.importPath}";`,
+    );
+    content = content.replace(
+      /\bdocker\(\)/g,
+      `${sandboxProvider.factoryImport}()`,
     );
 
     yield* fs
@@ -694,7 +713,13 @@ export const scaffold = (
     );
 
     // Rewrite main file with the selected agent factory and model
-    yield* rewriteMainTs(configDir, agent, model, mainFilename);
+    yield* rewriteMainTs(
+      configDir,
+      agent,
+      model,
+      sandboxProvider,
+      mainFilename,
+    );
 
     // Replace backlog manager template arguments in all text files (must run before label stripping)
     yield* substituteTemplateArgs(configDir, backlogManager);
