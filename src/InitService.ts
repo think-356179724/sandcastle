@@ -332,21 +332,35 @@ export const getAgent = (name: string): AgentEntry | undefined =>
 // Sandbox provider registry (internal — not part of public API)
 // ---------------------------------------------------------------------------
 
-export interface SandboxProviderEntry {
+interface BaseSandboxProviderEntry {
   readonly name: string;
   readonly label: string;
   /** Factory imported into scaffolded main files (e.g. "docker" or "podman") */
   readonly factoryImport: string;
   /** Import path for the sandbox factory in scaffolded main files. */
   readonly importPath: string;
+}
+
+export interface ContainerSandboxProviderEntry
+  extends BaseSandboxProviderEntry {
+  readonly kind: "container";
   /** Filename written to .sandcastle/ (e.g. "Dockerfile" or "Containerfile") */
   readonly containerfileName: string;
   /** CLI namespace for build/remove commands (e.g. "docker" or "podman") */
   readonly cliNamespace: string;
 }
 
+export interface NoSandboxProviderEntry extends BaseSandboxProviderEntry {
+  readonly kind: "none";
+}
+
+export type SandboxProviderEntry =
+  | ContainerSandboxProviderEntry
+  | NoSandboxProviderEntry;
+
 const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
   {
+    kind: "container",
     name: "docker",
     label: "Docker",
     factoryImport: "docker",
@@ -355,12 +369,20 @@ const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
     cliNamespace: "docker",
   },
   {
+    kind: "container",
     name: "podman",
     label: "Podman",
     factoryImport: "podman",
     importPath: "@ai-hero/sandcastle/sandboxes/podman",
     containerfileName: "Containerfile",
     cliNamespace: "podman",
+  },
+  {
+    kind: "none",
+    name: "no-sandbox",
+    label: "No sandbox",
+    factoryImport: "noSandbox",
+    importPath: "@ai-hero/sandcastle/sandboxes/no-sandbox",
   },
 ];
 
@@ -379,9 +401,13 @@ export const getSandboxProvider = (
 export function getNextStepsLines(
   template: string,
   mainFilename: string,
+  sandboxProvider: SandboxProviderEntry,
 ): string[] {
+  const noSandboxNote =
+    "   No sandbox means the agent runs directly on the host — there is no container isolation.";
+
   if (template === "blank") {
-    return [
+    const lines = [
       "Next steps:",
       `1. Set the required env vars in .sandcastle/.env (see .sandcastle/.env.example)`,
       "   If you want to use your Claude subscription instead of an API key, see https://github.com/mattpocock/sandcastle/issues/191",
@@ -390,6 +416,10 @@ export function getNextStepsLines(
       `4. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
       "5. Run `npm run sandcastle` to start the agent",
     ];
+    if (sandboxProvider.kind === "none") {
+      lines.splice(2, 0, noSandboxNote);
+    }
+    return lines;
   } else {
     const hasReviewer = template.includes("review");
     let step = 1;
@@ -401,6 +431,9 @@ export function getNextStepsLines(
       `${step++}. Templates use \`copyToWorktree: ["node_modules"]\` to copy your host node_modules into the sandbox for fast startup — the \`npm install\` in the onSandboxReady hook is a safety net for platform-specific binaries. Adjust both if you use a different package manager`,
       `${step++}. Read and customize the prompt files in .sandcastle/ — they shape what the agent does`,
     ];
+    if (sandboxProvider.kind === "none") {
+      lines.splice(2, 0, noSandboxNote);
+    }
     if (hasReviewer) {
       lines.push(
         `${step++}. Customize .sandcastle/CODING_STANDARDS.md with your project's standards — the reviewer agent loads it during review`,
@@ -740,18 +773,22 @@ export const scaffold = (
     yield* Effect.all(
       [
         fs
-          .writeFileString(
-            join(configDir, sandboxProvider.containerfileName),
-            agent.dockerfileTemplate,
-          )
-          .pipe(Effect.mapError((e) => new Error(e.message))),
-        fs
           .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
           .pipe(Effect.mapError((e) => new Error(e.message))),
         fs
           .writeFileString(join(configDir, ".env.example"), envExampleContent)
           .pipe(Effect.mapError((e) => new Error(e.message))),
         copyTemplateFiles(templateDir, configDir, mainFilename),
+        ...(sandboxProvider.kind === "container"
+          ? [
+              fs
+                .writeFileString(
+                  join(configDir, sandboxProvider.containerfileName),
+                  agent.dockerfileTemplate,
+                )
+                .pipe(Effect.mapError((e) => new Error(e.message))),
+            ]
+          : []),
       ],
       { concurrency: "unbounded" },
     );

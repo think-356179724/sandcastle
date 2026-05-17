@@ -25,6 +25,9 @@ const claudeCodeAgent = getAgent("claude-code")!;
 const piAgent = getAgent("pi")!;
 const codexAgent = getAgent("codex")!;
 const opencodeAgent = getAgent("opencode")!;
+const dockerProvider = getSandboxProvider("docker")!;
+const podmanProvider = getSandboxProvider("podman")!;
+const noSandboxProvider = getSandboxProvider("no-sandbox")!;
 
 const defaultOptions: ScaffoldOptions = {
   agent: claudeCodeAgent,
@@ -40,15 +43,25 @@ const runScaffold = (repoDir: string, options?: Partial<ScaffoldOptions>) =>
 
 const expectSandboxProviderRewrite = (
   mainContent: string,
-  providerName: "docker" | "podman",
+  providerName: "docker" | "podman" | "no-sandbox",
 ) => {
-  const otherProviderName = providerName === "docker" ? "podman" : "docker";
+  const expectedFactoryImport =
+    providerName === "no-sandbox" ? "noSandbox" : providerName;
+
   expect(mainContent).toContain(
     `@ai-hero/sandcastle/sandboxes/${providerName}`,
   );
-  expect(mainContent).toContain(`sandbox: ${providerName}()`);
-  expect(mainContent).not.toContain(`sandboxes/${otherProviderName}`);
-  expect(mainContent).not.toContain(`sandbox: ${otherProviderName}()`);
+  expect(mainContent).toContain(`sandbox: ${expectedFactoryImport}()`);
+
+  for (const otherProviderName of ["docker", "podman", "no-sandbox"] as const) {
+    if (otherProviderName === providerName) continue;
+    const otherFactoryImport =
+      otherProviderName === "no-sandbox" ? "noSandbox" : otherProviderName;
+    expect(mainContent).not.toContain(
+      `@ai-hero/sandcastle/sandboxes/${otherProviderName}`,
+    );
+    expect(mainContent).not.toContain(`sandbox: ${otherFactoryImport}()`);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -335,6 +348,40 @@ describe("InitService scaffold", () => {
     expect(mainTs).toContain("run(");
   });
 
+  it.each(listTemplates())(
+    "no-sandbox scaffolds template $name without container files",
+    async ({ name }) => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        templateName: name,
+        sandboxProvider: noSandboxProvider,
+      });
+
+      const { access } = await import("node:fs/promises");
+      await expect(
+        access(join(dir, ".sandcastle", "Dockerfile")),
+      ).rejects.toThrow();
+      await expect(
+        access(join(dir, ".sandcastle", "Containerfile")),
+      ).rejects.toThrow();
+    },
+  );
+
+  it(".env.example is identical for docker and no-sandbox", async () => {
+    const dockerDir = await makeDir();
+    const noSandboxDir = await makeDir();
+
+    await runScaffold(dockerDir, { sandboxProvider: dockerProvider });
+    await runScaffold(noSandboxDir, { sandboxProvider: noSandboxProvider });
+
+    const [dockerEnv, noSandboxEnv] = await Promise.all([
+      readFile(join(dockerDir, ".sandcastle", ".env.example"), "utf-8"),
+      readFile(join(noSandboxDir, ".sandcastle", ".env.example"), "utf-8"),
+    ]);
+
+    expect(noSandboxEnv).toBe(dockerEnv);
+  });
+
   it("blank template produces identical output to default (no template arg)", async () => {
     const dir1 = await makeDir();
     const dir2 = await makeDir();
@@ -590,7 +637,7 @@ describe("InitService scaffold", () => {
 
   describe("getNextStepsLines", () => {
     it("blank template returns steps mentioning .env and main filename (not npx sandcastle run)", () => {
-      const lines = getNextStepsLines("blank", "main.mts");
+      const lines = getNextStepsLines("blank", "main.mts", dockerProvider);
       expect(lines.length).toBeGreaterThanOrEqual(2);
       const joined = lines.join("\n");
       expect(joined).toContain(".env");
@@ -599,7 +646,11 @@ describe("InitService scaffold", () => {
     });
 
     it("non-blank template returns steps mentioning .env, package.json scripts, and npm run sandcastle", () => {
-      const lines = getNextStepsLines("simple-loop", "main.mts");
+      const lines = getNextStepsLines(
+        "simple-loop",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain(".env");
       expect(joined).toContain("package.json");
@@ -607,81 +658,120 @@ describe("InitService scaffold", () => {
     });
 
     it("non-blank template includes a note about customizing the install command", () => {
-      const lines = getNextStepsLines("simple-loop", "main.mts");
+      const lines = getNextStepsLines(
+        "simple-loop",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain("npm install");
       expect(joined).toContain("onSandboxReady");
     });
 
     it("non-blank template mentions copyToWorktree and node_modules", () => {
-      const lines = getNextStepsLines("simple-loop", "main.mts");
+      const lines = getNextStepsLines(
+        "simple-loop",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain("copyToWorktree");
       expect(joined).toContain("node_modules");
     });
 
     it("blank template includes a step to customize prompt.md", () => {
-      const lines = getNextStepsLines("blank", "main.mts");
+      const lines = getNextStepsLines("blank", "main.mts", dockerProvider);
       const joined = lines.join("\n");
       expect(joined).toContain("prompt.md");
     });
 
     it("simple-loop template includes a step to read/customize prompt files", () => {
-      const lines = getNextStepsLines("simple-loop", "main.mts");
+      const lines = getNextStepsLines(
+        "simple-loop",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain("prompt");
       expect(joined).toMatch(/customiz|review|read/i);
     });
 
     it("sequential-reviewer template includes a step mentioning prompt files", () => {
-      const lines = getNextStepsLines("sequential-reviewer", "main.mts");
+      const lines = getNextStepsLines(
+        "sequential-reviewer",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain("prompt");
       expect(joined).toMatch(/customiz|review|read/i);
     });
 
     it("parallel-planner template includes a step mentioning prompt files", () => {
-      const lines = getNextStepsLines("parallel-planner", "main.mts");
+      const lines = getNextStepsLines(
+        "parallel-planner",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain("prompt");
       expect(joined).toMatch(/customiz|review|read/i);
     });
 
     it("returns at least 2 numbered steps for blank template", () => {
-      const lines = getNextStepsLines("blank", "main.mts");
+      const lines = getNextStepsLines("blank", "main.mts", dockerProvider);
       const numberedSteps = lines.filter((l) => /^\d+\./.test(l));
       expect(numberedSteps.length).toBeGreaterThanOrEqual(2);
     });
 
     it("returns at least 3 numbered steps for non-blank templates", () => {
-      const lines = getNextStepsLines("simple-loop", "main.mts");
+      const lines = getNextStepsLines(
+        "simple-loop",
+        "main.mts",
+        dockerProvider,
+      );
       const numberedSteps = lines.filter((l) => /^\d+\./.test(l));
       expect(numberedSteps.length).toBeGreaterThanOrEqual(3);
     });
 
     it("uses main.ts filename when passed", () => {
-      const lines = getNextStepsLines("blank", "main.ts");
+      const lines = getNextStepsLines("blank", "main.ts", dockerProvider);
       const joined = lines.join("\n");
       expect(joined).toContain("main.ts");
       expect(joined).not.toContain("main.mts");
     });
 
     it("reviewer template mentions CODING_STANDARDS.md customization", () => {
-      const lines = getNextStepsLines("sequential-reviewer", "main.mts");
+      const lines = getNextStepsLines(
+        "sequential-reviewer",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).toContain("CODING_STANDARDS.md");
     });
 
     it("non-reviewer template does not mention CODING_STANDARDS.md", () => {
-      const lines = getNextStepsLines("simple-loop", "main.mts");
+      const lines = getNextStepsLines(
+        "simple-loop",
+        "main.mts",
+        dockerProvider,
+      );
       const joined = lines.join("\n");
       expect(joined).not.toContain("CODING_STANDARDS.md");
     });
 
     it("blank template does not mention CODING_STANDARDS.md", () => {
-      const lines = getNextStepsLines("blank", "main.mts");
+      const lines = getNextStepsLines("blank", "main.mts", dockerProvider);
       const joined = lines.join("\n");
       expect(joined).not.toContain("CODING_STANDARDS.md");
+    });
+
+    it("no-sandbox next steps mention host execution and do not mention build-image", () => {
+      const lines = getNextStepsLines("blank", "main.mts", noSandboxProvider);
+      const joined = lines.join("\n");
+      expect(joined).toContain("runs directly on the host");
+      expect(joined).not.toContain("build-image");
     });
   });
 
@@ -1947,9 +2037,6 @@ describe("InitService scaffold", () => {
   // ---------------------------------------------------------------------------
 
   describe("sandbox provider", () => {
-    const dockerProvider = getSandboxProvider("docker")!;
-    const podmanProvider = getSandboxProvider("podman")!;
-
     it("selecting docker writes Dockerfile to .sandcastle/", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { sandboxProvider: dockerProvider });
@@ -1987,6 +2074,7 @@ describe("InitService scaffold", () => {
     it.each([
       { providerName: "podman" as const, provider: podmanProvider },
       { providerName: "docker" as const, provider: dockerProvider },
+      { providerName: "no-sandbox" as const, provider: noSandboxProvider },
     ])(
       "selecting $providerName rewrites main.mts sandbox provider import and call",
       async ({ providerName, provider }) => {
@@ -2010,6 +2098,19 @@ describe("InitService scaffold", () => {
         access(join(dir, ".sandcastle", "Containerfile")),
       ).rejects.toThrow();
     });
+
+    it("selecting no-sandbox writes neither Dockerfile nor Containerfile", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { sandboxProvider: noSandboxProvider });
+
+      const { access } = await import("node:fs/promises");
+      await expect(
+        access(join(dir, ".sandcastle", "Dockerfile")),
+      ).rejects.toThrow();
+      await expect(
+        access(join(dir, ".sandcastle", "Containerfile")),
+      ).rejects.toThrow();
+    });
   });
 });
 
@@ -2018,24 +2119,41 @@ describe("InitService scaffold", () => {
 // ---------------------------------------------------------------------------
 
 describe("Sandbox provider registry", () => {
-  it("listSandboxProviders returns docker and podman", () => {
+  it("listSandboxProviders returns docker, podman, and no-sandbox", () => {
     const providers = listSandboxProviders();
     expect(providers.some((p) => p.name === "docker")).toBe(true);
     expect(providers.some((p) => p.name === "podman")).toBe(true);
+    expect(providers.some((p) => p.name === "no-sandbox")).toBe(true);
   });
 
   it("getSandboxProvider returns docker entry", () => {
     const provider = getSandboxProvider("docker");
     expect(provider).toBeDefined();
-    expect(provider!.containerfileName).toBe("Dockerfile");
-    expect(provider!.cliNamespace).toBe("docker");
+    if (!provider || provider.kind !== "container") {
+      throw new Error("expected container provider");
+    }
+    expect(provider.containerfileName).toBe("Dockerfile");
+    expect(provider.cliNamespace).toBe("docker");
   });
 
   it("getSandboxProvider returns podman entry", () => {
     const provider = getSandboxProvider("podman");
     expect(provider).toBeDefined();
-    expect(provider!.containerfileName).toBe("Containerfile");
-    expect(provider!.cliNamespace).toBe("podman");
+    if (!provider || provider.kind !== "container") {
+      throw new Error("expected container provider");
+    }
+    expect(provider.containerfileName).toBe("Containerfile");
+    expect(provider.cliNamespace).toBe("podman");
+  });
+
+  it("getSandboxProvider returns no-sandbox entry", () => {
+    const provider = getSandboxProvider("no-sandbox");
+    expect(provider).toBeDefined();
+    expect(provider!.kind).toBe("none");
+    expect(provider!.factoryImport).toBe("noSandbox");
+    expect(provider!.importPath).toBe(
+      "@ai-hero/sandcastle/sandboxes/no-sandbox",
+    );
   });
 
   it("getSandboxProvider returns undefined for unknown provider", () => {

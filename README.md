@@ -638,7 +638,7 @@ console.log(result.output.score); // typed as number
 
 ### Templates
 
-`sandcastle init` prompts you to choose a sandbox provider (Docker or Podman), a backlog manager (GitHub Issues or Beads), and a template, which scaffolds a ready-to-use prompt and `main.mts` suited to a specific workflow. If your project's `package.json` has `"type": "module"`, the file will be named `main.ts` instead. Five templates are available:
+`sandcastle init` prompts you to choose a sandbox provider (Docker, Podman, or No sandbox), a backlog manager (GitHub Issues or Beads), and a template, which scaffolds a ready-to-use prompt and `main.mts` suited to a specific workflow. If your project's `package.json` has `"type": "module"`, the file will be named `main.ts` instead. Five templates are available:
 
 | Template                       | Description                                                               |
 | ------------------------------ | ------------------------------------------------------------------------- |
@@ -654,7 +654,11 @@ Select a template during `sandcastle init` when prompted, or re-run init in a fr
 
 ### `sandcastle init`
 
-Scaffolds the `.sandcastle/` config directory and builds the container image. This is the first command you run in a new repo. You choose a sandbox provider (Docker or Podman) during init — selecting Podman writes a `Containerfile` instead of `Dockerfile` and uses `sandcastle podman build-image` for the build step.
+Scaffolds the `.sandcastle/` config directory. This is the first command you run in a new repo. You choose a sandbox provider during init:
+
+- Docker writes a `Dockerfile` and can build it immediately with `sandcastle docker build-image`
+- Podman writes a `Containerfile` and can build it immediately with `sandcastle podman build-image`
+- No sandbox writes no container file, skips the image-build prompt, and scaffolds `noSandbox()` so the agent runs directly on the host
 
 | Option         | Required | Default                      | Description                                                          |
 | -------------- | -------- | ---------------------------- | -------------------------------------------------------------------- |
@@ -664,7 +668,7 @@ Scaffolds the `.sandcastle/` config directory and builds the container image. Th
 | `--template`   | No       | Interactive prompt           | Template to scaffold (e.g. `blank`, `simple-loop`)                   |
 | `--force`      | No       | `false`                      | Overwrite an existing `.sandcastle/` directory without prompting     |
 
-Creates the following files:
+Creates the following files for container providers:
 
 ```
 .sandcastle/
@@ -675,6 +679,8 @@ Creates the following files:
 ```
 
 Errors if `.sandcastle/` already exists to prevent overwriting customizations.
+
+When you choose No sandbox, `.sandcastle/` still includes the prompt, env example, and entrypoint files, but it does not include a `Dockerfile` or `Containerfile`.
 
 ### `sandcastle docker build-image`
 
