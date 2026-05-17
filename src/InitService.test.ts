@@ -38,6 +38,19 @@ const runScaffold = (repoDir: string, options?: Partial<ScaffoldOptions>) =>
     ),
   );
 
+const expectSandboxProviderRewrite = (
+  mainContent: string,
+  providerName: "docker" | "podman",
+) => {
+  const otherProviderName = providerName === "docker" ? "podman" : "docker";
+  expect(mainContent).toContain(
+    `@ai-hero/sandcastle/sandboxes/${providerName}`,
+  );
+  expect(mainContent).toContain(`sandbox: ${providerName}()`);
+  expect(mainContent).not.toContain(`sandboxes/${otherProviderName}`);
+  expect(mainContent).not.toContain(`sandbox: ${otherProviderName}()`);
+};
+
 // ---------------------------------------------------------------------------
 // Agent registry
 // ---------------------------------------------------------------------------
@@ -1887,6 +1900,23 @@ describe("InitService scaffold", () => {
       expect(mainContent).toContain("main.ts");
     });
 
+    it("main.ts scaffolded with type: module rewrites sandbox provider to podman", async () => {
+      const dir = await makeDir();
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "test", type: "module" }),
+      );
+      await runScaffold(dir, {
+        sandboxProvider: getSandboxProvider("podman")!,
+      });
+
+      const mainContent = await readFile(
+        join(dir, ".sandcastle", "main.ts"),
+        "utf-8",
+      );
+      expectSandboxProviderRewrite(mainContent, "podman");
+    });
+
     it("scaffolds main.mts when package.json is invalid JSON", async () => {
       const dir = await makeDir();
       await writeFile(join(dir, "package.json"), "not valid json{{{");
@@ -1937,6 +1967,23 @@ describe("InitService scaffold", () => {
         access(join(dir, ".sandcastle", "Dockerfile")),
       ).rejects.toThrow();
     });
+
+    it.each([
+      { providerName: "podman" as const, provider: podmanProvider },
+      { providerName: "docker" as const, provider: dockerProvider },
+    ])(
+      "selecting $providerName rewrites main.mts sandbox provider import and call",
+      async ({ providerName, provider }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, { sandboxProvider: provider });
+
+        const mainContent = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expectSandboxProviderRewrite(mainContent, providerName);
+      },
+    );
 
     it("selecting docker does not write Containerfile", async () => {
       const dir = await makeDir();
