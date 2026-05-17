@@ -88,6 +88,11 @@ describe("sandcastle CLI", { timeout: 15_000 }, () => {
     expect(stdout).toContain("--force");
   }, 15_000);
 
+  it("init --help exposes --sandbox flag", async () => {
+    const { stdout } = await runCli("init --help", process.cwd());
+    expect(stdout).toContain("--sandbox");
+  }, 15_000);
+
   it("init --template nonexistent produces error listing available templates", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
@@ -154,6 +159,26 @@ describe("sandcastle CLI", { timeout: 15_000 }, () => {
       const { stdout, stderr } = err as { stdout: string; stderr: string };
       const output = stdout + stderr;
       expect(output).toContain("No .sandcastle/ found");
+    }
+  }, 15_000);
+
+  it("init --sandbox nonexistent produces error listing available providers", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+
+    try {
+      await runCli(
+        "init --agent claude-code --template blank --sandbox nonexistent",
+        hostDir,
+      );
+      expect.fail("Expected command to fail");
+    } catch (err: unknown) {
+      const { stdout, stderr } = err as { stdout: string; stderr: string };
+      const output = stdout + stderr;
+      expect(output).toContain("nonexistent");
+      expect(output).toContain("docker");
+      expect(output).toContain("podman");
+      expect(output).toContain("no-sandbox");
     }
   }, 15_000);
 

@@ -126,6 +126,13 @@ const forceOption = Options.boolean("force").pipe(
   Options.withDefault(false),
 );
 
+const sandboxOption = Options.text("sandbox").pipe(
+  Options.withDescription(
+    "Sandbox provider to use (docker, podman, no-sandbox). Skips the interactive picker",
+  ),
+  Options.optional,
+);
+
 const initCommand = Command.make(
   "init",
   {
@@ -134,6 +141,7 @@ const initCommand = Command.make(
     agent: agentOption,
     model: initModelOption,
     force: forceOption,
+    sandbox: sandboxOption,
   },
   ({
     imageName: imageNameFlag,
@@ -141,6 +149,7 @@ const initCommand = Command.make(
     agent: agentFlag,
     model: modelFlag,
     force: forceFlag,
+    sandbox: sandboxFlag,
   }) =>
     Effect.gen(function* () {
       const d = yield* Display;
@@ -201,10 +210,21 @@ const initCommand = Command.make(
           ? modelFlag.value
           : selectedAgent.defaultModel;
 
-      // Resolve sandbox provider: interactive select (no default — user must choose)
+      // Resolve sandbox provider: CLI flag > interactive select (no default — user must choose)
       const sandboxProviders = listSandboxProviders();
       let selectedSandboxProvider: SandboxProviderEntry;
-      {
+      if (sandboxFlag._tag === "Some") {
+        const entry = getSandboxProvider(sandboxFlag.value);
+        if (!entry) {
+          const names = sandboxProviders.map((p) => p.name).join(", ");
+          yield* Effect.fail(
+            new InitError({
+              message: `Unknown sandbox provider "${sandboxFlag.value}". Available: ${names}`,
+            }),
+          );
+        }
+        selectedSandboxProvider = entry!;
+      } else {
         const selected = yield* Effect.promise(() =>
           clack.select({
             message: "Select a sandbox provider:",

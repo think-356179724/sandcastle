@@ -80,7 +80,9 @@ describe("sandcastle init interactive no-sandbox", () => {
       SilentDisplay.layer(ref),
     );
 
-    await Effect.runPromise(cli(["node", "sandcastle", "init"]).pipe(Effect.provide(layer)));
+    await Effect.runPromise(
+      cli(["node", "sandcastle", "init"]).pipe(Effect.provide(layer)),
+    );
 
     expect(selectMock).toHaveBeenCalledTimes(4);
     expect(confirmMock).not.toHaveBeenCalled();
@@ -101,7 +103,10 @@ describe("sandcastle init interactive no-sandbox", () => {
 
     const entries = await Effect.runPromise(Ref.get(ref));
     const textEntries = entries
-      .filter((entry): entry is Extract<DisplayEntry, { _tag: "text" }> => entry._tag === "text")
+      .filter(
+        (entry): entry is Extract<DisplayEntry, { _tag: "text" }> =>
+          entry._tag === "text",
+      )
       .map((entry) => entry.message);
     expect(textEntries.join("\n")).not.toContain("build-image");
 
@@ -113,5 +118,138 @@ describe("sandcastle init interactive no-sandbox", () => {
       'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";',
     );
     expect(mainContent).toContain("sandbox: noSandbox()");
+  });
+
+  it("--sandbox no-sandbox skips the picker and writes no container file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "sandcastle-cli-init-"));
+    process.chdir(dir);
+
+    // Only the backlog-manager select remains (agent/template/sandbox via flags).
+    selectMock.mockResolvedValueOnce("beads");
+
+    const [{ cli }, ref] = await Promise.all([
+      import("./cli.js"),
+      Effect.runPromise(Ref.make<ReadonlyArray<DisplayEntry>>([])),
+    ]);
+
+    const layer = Layer.mergeAll(
+      NodeContext.layer,
+      NodeFileSystem.layer,
+      NodePath.layer,
+      SilentDisplay.layer(ref),
+    );
+
+    await Effect.runPromise(
+      cli([
+        "node",
+        "sandcastle",
+        "init",
+        "--agent",
+        "claude-code",
+        "--template",
+        "blank",
+        "--sandbox",
+        "no-sandbox",
+      ]).pipe(Effect.provide(layer)),
+    );
+
+    // Sandbox picker is bypassed: only the backlog-manager select fires.
+    expect(selectMock).toHaveBeenCalledTimes(1);
+    expect(selectMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Select a sandbox provider:" }),
+    );
+    expect(confirmMock).not.toHaveBeenCalled();
+
+    const configDir = join(dir, ".sandcastle");
+    await expect(
+      readFile(join(configDir, "Dockerfile"), "utf8"),
+    ).rejects.toThrow();
+    await expect(
+      readFile(join(configDir, "Containerfile"), "utf8"),
+    ).rejects.toThrow();
+
+    const mainContent = await readFile(join(configDir, "main.mts"), "utf8");
+    expect(mainContent).toContain(
+      'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";',
+    );
+    expect(mainContent).toContain("sandbox: noSandbox()");
+  });
+
+  it("--sandbox docker skips the picker and writes a Dockerfile", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "sandcastle-cli-init-"));
+    process.chdir(dir);
+
+    selectMock.mockResolvedValueOnce("beads");
+    // Decline the "build the image now?" prompt for the container provider.
+    confirmMock.mockResolvedValueOnce(false);
+
+    const [{ cli }, ref] = await Promise.all([
+      import("./cli.js"),
+      Effect.runPromise(Ref.make<ReadonlyArray<DisplayEntry>>([])),
+    ]);
+
+    const layer = Layer.mergeAll(
+      NodeContext.layer,
+      NodeFileSystem.layer,
+      NodePath.layer,
+      SilentDisplay.layer(ref),
+    );
+
+    await Effect.runPromise(
+      cli([
+        "node",
+        "sandcastle",
+        "init",
+        "--agent",
+        "claude-code",
+        "--template",
+        "blank",
+        "--sandbox",
+        "docker",
+      ]).pipe(Effect.provide(layer)),
+    );
+
+    expect(selectMock).toHaveBeenCalledTimes(1);
+    expect(selectMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Select a sandbox provider:" }),
+    );
+
+    const configDir = join(dir, ".sandcastle");
+    const dockerfile = await readFile(join(configDir, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM node:22-bookworm");
+
+    const mainContent = await readFile(join(configDir, "main.mts"), "utf8");
+    expect(mainContent).toContain("sandbox: docker()");
+  });
+
+  it("without --sandbox the interactive sandbox picker is still shown", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "sandcastle-cli-init-"));
+    process.chdir(dir);
+
+    selectMock
+      .mockResolvedValueOnce("claude-code")
+      .mockResolvedValueOnce("no-sandbox")
+      .mockResolvedValueOnce("beads")
+      .mockResolvedValueOnce("blank");
+
+    const [{ cli }, ref] = await Promise.all([
+      import("./cli.js"),
+      Effect.runPromise(Ref.make<ReadonlyArray<DisplayEntry>>([])),
+    ]);
+
+    const layer = Layer.mergeAll(
+      NodeContext.layer,
+      NodeFileSystem.layer,
+      NodePath.layer,
+      SilentDisplay.layer(ref),
+    );
+
+    await Effect.runPromise(
+      cli(["node", "sandcastle", "init"]).pipe(Effect.provide(layer)),
+    );
+
+    expect(selectMock).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Select a sandbox provider:" }),
+    );
   });
 });

@@ -682,13 +682,16 @@ Scaffolds the `.sandcastle/` config directory. This is the first command you run
 - Podman writes a `Containerfile` and can build it immediately with `sandcastle podman build-image`
 - No sandbox writes no container file, skips the image-build prompt, and scaffolds `noSandbox()` so the agent runs directly on the host
 
-| Option         | Required | Default                      | Description                                                          |
-| -------------- | -------- | ---------------------------- | -------------------------------------------------------------------- |
-| `--image-name` | No       | `sandcastle:<repo-dir-name>` | Docker image name                                                    |
-| `--agent`      | No       | Interactive prompt           | Agent to use (`claude-code`, `pi`, `codex`, `opencode`)              |
-| `--model`      | No       | Agent's default model        | Model to use (e.g. `claude-sonnet-4-6`). Defaults to agent's default |
-| `--template`   | No       | Interactive prompt           | Template to scaffold (e.g. `blank`, `simple-loop`)                   |
-| `--force`      | No       | `false`                      | Overwrite an existing `.sandcastle/` directory without prompting     |
+Pass `--sandbox <name>` to skip the interactive picker entirely — this makes `init` runnable in non-interactive environments such as CI (e.g. `sandcastle init --sandbox no-sandbox --agent claude-code --template blank`).
+
+| Option         | Required | Default                      | Description                                                                                                    |
+| -------------- | -------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `--image-name` | No       | `sandcastle:<repo-dir-name>` | Docker image name                                                                                              |
+| `--agent`      | No       | Interactive prompt           | Agent to use (`claude-code`, `pi`, `codex`, `opencode`)                                                        |
+| `--model`      | No       | Agent's default model        | Model to use (e.g. `claude-sonnet-4-6`). Defaults to agent's default                                           |
+| `--template`   | No       | Interactive prompt           | Template to scaffold (e.g. `blank`, `simple-loop`)                                                             |
+| `--sandbox`    | No       | Interactive prompt           | Sandbox provider (`docker`, `podman`, `no-sandbox`). Skips the picker — required for non-interactive (CI) init |
+| `--force`      | No       | `false`                      | Overwrite an existing `.sandcastle/` directory without prompting                                               |
 
 Creates the following files for container providers:
 
