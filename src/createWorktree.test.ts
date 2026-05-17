@@ -1,6 +1,6 @@
 import { exec, execSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -720,7 +720,7 @@ describe("worktree.run()", () => {
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
     const binDir = join(hostDir, "bin");
-    await execAsync(`mkdir -p "${binDir}"`);
+    await mkdir(binDir, { recursive: true });
     const tracePath = join(hostDir, "agent-argv.txt");
     const claudePath = join(binDir, "claude");
 

@@ -78,6 +78,63 @@ const makeIsolatedApplyToHost = (
     );
 };
 
+type WorktreeSandboxHandle =
+  | BindMountSandboxHandle
+  | IsolatedSandboxHandle
+  | NoSandboxHandle;
+
+const createNoSandboxHandle = (
+  sandboxProvider: Extract<AnySandboxProvider, { tag: "none" }>,
+  worktreePath: string,
+  env: Record<string, string>,
+) =>
+  Effect.promise(() =>
+    sandboxProvider.create({
+      worktreePath,
+      env,
+    }),
+  );
+
+const startIsolatedWorktreeSandbox = (
+  sandboxProvider: Extract<AnySandboxProvider, { tag: "isolated" }>,
+  worktreePath: string,
+  env: Record<string, string>,
+) =>
+  startSandbox({
+    provider: sandboxProvider,
+    hostRepoDir: worktreePath,
+    env,
+  });
+
+const startBindMountWorktreeSandbox = (
+  sandboxProvider: Extract<AnySandboxProvider, { tag: "bind-mount" }>,
+  hostRepoDir: string,
+  worktreePath: string,
+  env: Record<string, string>,
+) =>
+  Effect.gen(function* () {
+    const gitPath = join(hostRepoDir, ".git");
+    const gitMounts = yield* resolveGitMounts(gitPath);
+
+    return yield* startSandbox({
+      provider: sandboxProvider,
+      hostRepoDir,
+      env,
+      worktreeOrRepoPath: worktreePath,
+      gitMounts,
+      repoDir: SANDBOX_REPO_DIR,
+    });
+  });
+
+const makeSandboxApplyToHost = (
+  sandboxProvider: AnySandboxProvider,
+  worktreePath: string,
+  handle: WorktreeSandboxHandle,
+) =>
+  sandboxProvider.tag === "isolated"
+    ? makeIsolatedApplyToHost(worktreePath, handle as IsolatedSandboxHandle)
+    : () => Effect.void;
+
 export interface CreateWorktreeOptions {
   /** Branch strategy — only 'branch' and 'merge-to-head' are allowed. */
   readonly branchStrategy: WorktreeBranchStrategy;
@@ -351,39 +408,31 @@ export const createWorktree = async (
       });
 
       // 4. Start sandbox
-      let handle:
-        | BindMountSandboxHandle
-        | IsolatedSandboxHandle
-        | NoSandboxHandle;
+      let handle: WorktreeSandboxHandle;
 
       if (resolvedSandbox.tag === "none") {
-        handle = yield* Effect.promise(() =>
-          resolvedSandbox.create({
-            worktreePath: worktreeInfo.path,
-            env: effectiveEnv,
-          }),
+        handle = yield* createNoSandboxHandle(
+          resolvedSandbox,
+          worktreeInfo.path,
+          effectiveEnv,
         );
       } else if (resolvedSandbox.tag === "isolated") {
         const startResult = yield* d.taskLog("Starting sandbox", () =>
-          startSandbox({
-            provider: resolvedSandbox,
-            hostRepoDir: worktreeInfo.path,
-            env: effectiveEnv,
-          }),
+          startIsolatedWorktreeSandbox(
+            resolvedSandbox,
+            worktreeInfo.path,
+            effectiveEnv,
+          ),
         );
         handle = startResult.handle;
       } else {
-        const gitPath = join(hostRepoDir, ".git");
-        const gitMounts = yield* resolveGitMounts(gitPath);
         const startResult = yield* d.taskLog("Starting sandbox", () =>
-          startSandbox({
-            provider: resolvedSandbox,
+          startBindMountWorktreeSandbox(
+            resolvedSandbox,
             hostRepoDir,
-            env: effectiveEnv,
-            worktreeOrRepoPath: worktreeInfo.path,
-            gitMounts,
-            repoDir: SANDBOX_REPO_DIR,
-          }),
+            worktreeInfo.path,
+            effectiveEnv,
+          ),
         );
         handle = startResult.handle;
       }
@@ -400,13 +449,11 @@ export const createWorktree = async (
         const sandboxLayer = makeSandboxLayerFromHandle(handle);
         const worktreePath = handle.worktreePath;
 
-        const applyToHost =
-          resolvedSandbox.tag === "isolated"
-            ? makeIsolatedApplyToHost(
-                worktreeInfo.path,
-                handle as IsolatedSandboxHandle,
-              )
-            : () => Effect.void;
+        const applyToHost = makeSandboxApplyToHost(
+          resolvedSandbox,
+          worktreeInfo.path,
+          handle,
+        );
 
         const lifecycleEffect = withSandboxLifecycle(
           {
@@ -553,51 +600,41 @@ export const createWorktree = async (
       }
 
       // 4. Start sandbox
-      let handle:
-        | BindMountSandboxHandle
-        | IsolatedSandboxHandle
-        | NoSandboxHandle;
+      let handle: WorktreeSandboxHandle;
       let sandboxRepoDir: string;
 
       if (sandboxProvider.tag === "none") {
-        handle = yield* Effect.promise(() =>
-          sandboxProvider.create({
-            worktreePath: worktreeInfo.path,
-            env: effectiveEnv,
-          }),
+        handle = yield* createNoSandboxHandle(
+          sandboxProvider,
+          worktreeInfo.path,
+          effectiveEnv,
         );
         sandboxRepoDir = handle.worktreePath;
       } else if (sandboxProvider.tag === "isolated") {
-        const startResult = yield* startSandbox({
-          provider: sandboxProvider,
-          hostRepoDir: worktreeInfo.path,
-          env: effectiveEnv,
-        });
+        const startResult = yield* startIsolatedWorktreeSandbox(
+          sandboxProvider,
+          worktreeInfo.path,
+          effectiveEnv,
+        );
         handle = startResult.handle;
         sandboxRepoDir = startResult.worktreePath;
       } else {
-        const gitPath = join(hostRepoDir, ".git");
-        const gitMounts = yield* resolveGitMounts(gitPath);
-        const startResult = yield* startSandbox({
-          provider: sandboxProvider,
+        const startResult = yield* startBindMountWorktreeSandbox(
+          sandboxProvider,
           hostRepoDir,
-          env: effectiveEnv,
-          worktreeOrRepoPath: worktreeInfo.path,
-          gitMounts,
-          repoDir: SANDBOX_REPO_DIR,
-        });
+          worktreeInfo.path,
+          effectiveEnv,
+        );
         handle = startResult.handle;
         sandboxRepoDir = startResult.worktreePath;
       }
 
       const sandboxLayer = makeSandboxLayerFromHandle(handle);
-      const applyToHost =
-        sandboxProvider.tag === "isolated"
-          ? makeIsolatedApplyToHost(
-              worktreeInfo.path,
-              handle as IsolatedSandboxHandle,
-            )
-          : () => Effect.void;
+      const applyToHost = makeSandboxApplyToHost(
+        sandboxProvider,
+        worktreeInfo.path,
+        handle,
+      );
 
       // 5. Resolve logging
       const resolvedLogging: LoggingOption = opts.logging ?? {
