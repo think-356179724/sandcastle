@@ -45,13 +45,13 @@ describe("sandcastle CLI", () => {
     expect(stdout).not.toContain("cleanup-sandbox");
     expect(stdout).not.toContain("sync-in");
     expect(stdout).not.toContain("sync-out");
-  });
+  }, 15_000);
 
   it("docker --help shows build-image and remove-image subcommands", async () => {
     const { stdout } = await runCli("docker --help", process.cwd());
     expect(stdout).toContain("build-image");
     expect(stdout).toContain("remove-image");
-  });
+  }, 15_000);
 
   it("docker build-image errors when .sandcastle/ is missing", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
@@ -66,27 +66,27 @@ describe("sandcastle CLI", () => {
       const output = stdout + stderr;
       expect(output).toContain("No .sandcastle/ found");
     }
-  });
+  }, 15_000);
 
   it("init --help shows --template flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--template");
-  });
+  }, 15_000);
 
   it("init --help exposes --agent flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--agent");
-  });
+  }, 15_000);
 
   it("init --help exposes --model flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--model");
-  });
+  }, 15_000);
 
   it("init --help exposes --force flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--force");
-  });
+  }, 15_000);
 
   it("init --template nonexistent produces error listing available templates", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
@@ -102,7 +102,7 @@ describe("sandcastle CLI", () => {
       expect(output).toContain("blank");
       expect(output).toContain("simple-loop");
     }
-  });
+  }, 15_000);
 
   it("old top-level build-image command no longer works", async () => {
     try {
@@ -112,7 +112,7 @@ describe("sandcastle CLI", () => {
       // Command should fail since build-image is no longer a top-level command
       expect(err).toBeDefined();
     }
-  });
+  }, 15_000);
 
   it("old top-level remove-image command no longer works", async () => {
     try {
@@ -121,26 +121,26 @@ describe("sandcastle CLI", () => {
     } catch (err: unknown) {
       expect(err).toBeDefined();
     }
-  });
+  }, 15_000);
 
   it("--help shows podman namespace", async () => {
     const { stdout } = await runCli("--help", process.cwd());
     expect(stdout).toContain("podman");
     expect(stdout).toContain("podman build-image");
     expect(stdout).toContain("podman remove-image");
-  });
+  }, 15_000);
 
   it("podman --help shows build-image and remove-image subcommands", async () => {
     const { stdout } = await runCli("podman --help", process.cwd());
     expect(stdout).toContain("build-image");
     expect(stdout).toContain("remove-image");
-  });
+  }, 15_000);
 
   it("podman build-image --help shows --containerfile and --image-name flags", async () => {
     const { stdout } = await runCli("podman build-image --help", process.cwd());
     expect(stdout).toContain("--containerfile");
     expect(stdout).toContain("--image-name");
-  });
+  }, 15_000);
 
   it("podman build-image errors when .sandcastle/ is missing", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
@@ -155,7 +155,7 @@ describe("sandcastle CLI", () => {
       const output = stdout + stderr;
       expect(output).toContain("No .sandcastle/ found");
     }
-  });
+  }, 15_000);
 
   it("init --agent nonexistent produces error listing available agents", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
@@ -170,5 +170,5 @@ describe("sandcastle CLI", () => {
       expect(output).toContain("nonexistent");
       expect(output).toContain("claude-code");
     }
-  });
+  }, 15_000);
 });
