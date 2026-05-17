@@ -10,6 +10,7 @@ import {
   type InteractiveExecOptions,
 } from "./SandboxProvider.js";
 import { claudeCode, pi, codex, opencode } from "./AgentProvider.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 
 // --- buildInteractiveArgs prompt tests ---
 
@@ -174,6 +175,50 @@ describe("interactive()", () => {
     // Claude Code's buildInteractiveArgs should include the prompt
     expect(receivedArgs).toContain("fix the login bug");
     expect(receivedArgs[0]).toBe("claude");
+  });
+
+  // Regression guard — ADR 0015 / PRD #1 acceptance criterion 4:
+  // interactive() must NOT pass --dangerously-skip-permissions for noSandbox()
+  // (interactive sessions are user-approved), while a sandboxed AFK provider must.
+  it("does NOT pass --dangerously-skip-permissions to the agent for noSandbox()", async () => {
+    const base = noSandbox();
+    let noSandboxArgs: string[] = [];
+    const noSandboxProvider: typeof base = {
+      ...base,
+      create: async (opts) => {
+        const handle = await base.create(opts);
+        return {
+          ...handle,
+          interactiveExec: async (args) => {
+            noSandboxArgs = args;
+            return { exitCode: 0 };
+          },
+        };
+      },
+    };
+
+    await interactive({
+      agent: claudeCode("claude-opus-4-7"),
+      sandbox: noSandboxProvider,
+      prompt: "fix the bug",
+    });
+
+    expect(noSandboxArgs).not.toContain("--dangerously-skip-permissions");
+
+    // Contrast: a sandboxed (bind-mount) provider DOES skip permissions (AFK).
+    const sandboxedArgs: string[] = [];
+    const sandboxed = makeTestProvider(async (args) => {
+      sandboxedArgs.push(...args);
+      return { exitCode: 0 };
+    });
+
+    await interactive({
+      agent: claudeCode("claude-opus-4-7"),
+      sandbox: sandboxed,
+      prompt: "fix the bug",
+    });
+
+    expect(sandboxedArgs).toContain("--dangerously-skip-permissions");
   });
 
   it("collects commits made during the interactive session", async () => {
