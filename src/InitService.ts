@@ -453,6 +453,47 @@ const copyTemplateFiles = (
     );
   });
 
+const DOCKER_IMPORT_RE = /import\s+\{\s*docker\s*\}\s+from\s+["'][^"']+["'];?/g;
+const DOCKER_FACTORY_CALL_RE = /\bdocker\(\)/g;
+
+const rewriteMainFilenameReferences = (
+  content: string,
+  mainFilename: string,
+): string =>
+  mainFilename === "main.ts"
+    ? content.replace(/main\.mts/g, "main.ts")
+    : content;
+
+const rewriteAgentFactory = (
+  content: string,
+  agent: AgentEntry,
+  model: string,
+): string => {
+  const updatedContent = content.replace(
+    /\bclaudeCode\b/g,
+    agent.factoryImport,
+  );
+  const factoryCallRe = new RegExp(
+    `${agent.factoryImport}\\(["']([^"']+)["']\\)`,
+    "g",
+  );
+  return updatedContent.replace(
+    factoryCallRe,
+    `${agent.factoryImport}("${model}")`,
+  );
+};
+
+const rewriteSandboxProviderFactory = (
+  content: string,
+  sandboxProvider: SandboxProviderEntry,
+): string =>
+  content
+    .replace(
+      DOCKER_IMPORT_RE,
+      `import { ${sandboxProvider.factoryImport} } from "${sandboxProvider.importPath}";`,
+    )
+    .replace(DOCKER_FACTORY_CALL_RE, `${sandboxProvider.factoryImport}()`);
+
 /**
  * Replace the agent factory import and call in a scaffolded main.ts.
  *
@@ -479,35 +520,9 @@ const rewriteMainTs = (
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
-    // Templates use main.mts as the canonical filename in comments.
-    // When the target is main.ts, rewrite those references.
-    if (mainFilename === "main.ts") {
-      content = content.replace(/main\.mts/g, "main.ts");
-    }
-
-    // Replace factory function name in imports (e.g. claudeCode → pi)
-    // and all factory calls with the correct model.
-    // Templates always use claudeCode as the placeholder factory.
-    content = content.replace(/\bclaudeCode\b/g, agent.factoryImport);
-    // Replace model strings in factory calls: factoryImport("any-model")
-    const factoryCallRe = new RegExp(
-      `${agent.factoryImport}\\(["']([^"']+)["']\\)`,
-      "g",
-    );
-    content = content.replace(
-      factoryCallRe,
-      `${agent.factoryImport}("${model}")`,
-    );
-
-    // Templates always use docker() as the sandbox provider placeholder.
-    content = content.replace(
-      /import\s+\{\s*docker\s*\}\s+from\s+["'][^"']+["'];?/g,
-      `import { ${sandboxProvider.factoryImport} } from "${sandboxProvider.importPath}";`,
-    );
-    content = content.replace(
-      /\bdocker\(\)/g,
-      `${sandboxProvider.factoryImport}()`,
-    );
+    content = rewriteMainFilenameReferences(content, mainFilename);
+    content = rewriteAgentFactory(content, agent, model);
+    content = rewriteSandboxProviderFactory(content, sandboxProvider);
 
     yield* fs
       .writeFileString(mainTsPath, content)

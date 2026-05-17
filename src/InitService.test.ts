@@ -38,6 +38,19 @@ const runScaffold = (repoDir: string, options?: Partial<ScaffoldOptions>) =>
     ),
   );
 
+const expectSandboxProviderRewrite = (
+  mainContent: string,
+  providerName: "docker" | "podman",
+) => {
+  const otherProviderName = providerName === "docker" ? "podman" : "docker";
+  expect(mainContent).toContain(
+    `@ai-hero/sandcastle/sandboxes/${providerName}`,
+  );
+  expect(mainContent).toContain(`sandbox: ${providerName}()`);
+  expect(mainContent).not.toContain(`sandboxes/${otherProviderName}`);
+  expect(mainContent).not.toContain(`sandbox: ${otherProviderName}()`);
+};
+
 // ---------------------------------------------------------------------------
 // Agent registry
 // ---------------------------------------------------------------------------
@@ -1887,7 +1900,7 @@ describe("InitService scaffold", () => {
       expect(mainContent).toContain("main.ts");
     });
 
-    it("main.ts scaffolded with type: module rewrites sandbox provider correctly", async () => {
+    it("main.ts scaffolded with type: module rewrites sandbox provider to podman", async () => {
       const dir = await makeDir();
       await writeFile(
         join(dir, "package.json"),
@@ -1901,10 +1914,7 @@ describe("InitService scaffold", () => {
         join(dir, ".sandcastle", "main.ts"),
         "utf-8",
       );
-      expect(mainContent).toContain("@ai-hero/sandcastle/sandboxes/podman");
-      expect(mainContent).toContain("sandbox: podman()");
-      expect(mainContent).not.toContain("sandboxes/docker");
-      expect(mainContent).not.toContain("sandbox: docker()");
+      expectSandboxProviderRewrite(mainContent, "podman");
     });
 
     it("scaffolds main.mts when package.json is invalid JSON", async () => {
@@ -1958,33 +1968,22 @@ describe("InitService scaffold", () => {
       ).rejects.toThrow();
     });
 
-    it("selecting podman rewrites main.mts to import and call podman()", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { sandboxProvider: podmanProvider });
+    it.each([
+      { providerName: "podman" as const, provider: podmanProvider },
+      { providerName: "docker" as const, provider: dockerProvider },
+    ])(
+      "selecting $providerName rewrites main.mts sandbox provider import and call",
+      async ({ providerName, provider }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, { sandboxProvider: provider });
 
-      const mainContent = await readFile(
-        join(dir, ".sandcastle", "main.mts"),
-        "utf-8",
-      );
-      expect(mainContent).toContain("@ai-hero/sandcastle/sandboxes/podman");
-      expect(mainContent).toContain("sandbox: podman()");
-      expect(mainContent).not.toContain("sandboxes/docker");
-      expect(mainContent).not.toContain("sandbox: docker()");
-    });
-
-    it("selecting docker keeps main.mts importing and calling docker()", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { sandboxProvider: dockerProvider });
-
-      const mainContent = await readFile(
-        join(dir, ".sandcastle", "main.mts"),
-        "utf-8",
-      );
-      expect(mainContent).toContain("@ai-hero/sandcastle/sandboxes/docker");
-      expect(mainContent).toContain("sandbox: docker()");
-      expect(mainContent).not.toContain("sandboxes/podman");
-      expect(mainContent).not.toContain("sandbox: podman()");
-    });
+        const mainContent = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expectSandboxProviderRewrite(mainContent, providerName);
+      },
+    );
 
     it("selecting docker does not write Containerfile", async () => {
       const dir = await makeDir();
