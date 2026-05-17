@@ -13,6 +13,7 @@ import {
   type SandboxProvider,
   type BindMountSandboxHandle,
   type BranchStrategy,
+  type NoSandboxProvider,
 } from "./SandboxProvider.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 
@@ -595,6 +596,64 @@ describe("WorktreeDockerSandboxFactory", () => {
 
     expect(result.preservedWorktreePath).toBeUndefined();
     expect(result.value).toBe("done");
+  });
+
+  it("does not expose bindMountHandle for no-sandbox worktree runs", async () => {
+    const create = vi.fn(
+      async ({ worktreePath }: { worktreePath: string }) => ({
+        worktreePath,
+        exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        interactiveExec: async () => ({ exitCode: 0 }),
+        close: async () => {},
+      }),
+    );
+
+    const noSandboxProvider: NoSandboxProvider = {
+      tag: "none",
+      name: "no-sandbox",
+      env: {},
+      create,
+    };
+
+    const layer = Layer.provide(
+      WorktreeDockerSandboxFactory.layer,
+      Layer.mergeAll(
+        Layer.succeed(SandboxConfig, {
+          env: { FOO: "bar" },
+          hostRepoDir,
+          sandboxProvider: noSandboxProvider,
+          branchStrategy: { type: "merge-to-head" },
+        }),
+        NodeFileSystem.layer,
+        SilentDisplay.layer(Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([])),
+      ),
+    );
+
+    let receivedInfo:
+      | {
+          hostWorktreePath?: string;
+          sandboxRepoPath: string;
+          bindMountHandle?: BindMountSandboxHandle;
+        }
+      | undefined;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const factory = yield* SandboxFactory;
+        yield* factory.withSandbox((info) => {
+          receivedInfo = info;
+          return Effect.void;
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      worktreePath,
+      env: { FOO: "bar" },
+    });
+    expect(receivedInfo?.hostWorktreePath).toBe(worktreePath);
+    expect(receivedInfo?.sandboxRepoPath).toBe(worktreePath);
+    expect(receivedInfo?.bindMountHandle).toBeUndefined();
   });
 });
 

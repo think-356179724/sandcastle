@@ -22,6 +22,7 @@ import type {
   BindMountSandboxProvider,
   BindMountSandboxHandle,
   IsolatedSandboxHandle,
+  NoSandboxProvider,
   NoSandboxHandle,
 } from "./SandboxProvider.js";
 import { runHostHooks, type SandboxHooks } from "./SandboxLifecycle.js";
@@ -264,6 +265,11 @@ export interface MountEntry {
   readonly sandboxPath: string;
 }
 
+type SandboxHandle =
+  | BindMountSandboxHandle
+  | IsolatedSandboxHandle
+  | NoSandboxHandle;
+
 /**
  * Resolves the git-related mounts needed for the sandbox.
  * Handles both normal repos (where .git is a directory) and worktrees
@@ -298,10 +304,53 @@ export const resolveGitMounts = (
 /** Shared acquire result type for the worktree-mode acquireUseRelease. */
 interface AcquireResult {
   worktreeInfo: WorktreeManager.WorktreeInfo;
-  handle: BindMountSandboxHandle | IsolatedSandboxHandle | NoSandboxHandle;
+  handle: SandboxHandle;
   sandboxLayer: Layer.Layer<Sandbox>;
   worktreePath: string;
 }
+
+const closeSandboxHandle = (
+  handle: SandboxHandle,
+): Effect.Effect<void, never, never> =>
+  Effect.tryPromise({
+    try: () => handle.close(),
+    catch: () => undefined,
+  }).pipe(Effect.orDie);
+
+const getBindMountHandle = (
+  handle: SandboxHandle,
+): BindMountSandboxHandle | undefined =>
+  "copyFileIn" in handle && "copyFileOut" in handle ? handle : undefined;
+
+const createNoSandboxHandle = (
+  sandboxProvider: NoSandboxProvider,
+  worktreePath: string,
+  env: Record<string, string>,
+): Effect.Effect<
+  {
+    handle: NoSandboxHandle;
+    sandboxLayer: Layer.Layer<Sandbox>;
+    worktreePath: string;
+  },
+  WorktreeError
+> =>
+  Effect.tryPromise({
+    try: () =>
+      sandboxProvider.create({
+        worktreePath,
+        env,
+      }),
+    catch: (e) =>
+      new WorktreeError({
+        message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
+      }),
+  }).pipe(
+    Effect.map((handle) => ({
+      handle,
+      sandboxLayer: makeSandboxLayerFromHandle(handle),
+      worktreePath: handle.worktreePath,
+    })),
+  );
 
 export const WorktreeDockerSandboxFactory = {
   layer: Layer.effect(
@@ -428,23 +477,7 @@ export const WorktreeDockerSandboxFactory = {
             if (sandboxProvider.tag === "none") {
               // Head mode with no sandbox: run directly in the host repo.
               return Effect.acquireUseRelease(
-                Effect.tryPromise({
-                  try: () =>
-                    sandboxProvider.create({
-                      worktreePath: hostRepoDir,
-                      env,
-                    }),
-                  catch: (e) =>
-                    new WorktreeError({
-                      message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
-                    }),
-                }).pipe(
-                  Effect.map((handle) => ({
-                    handle,
-                    sandboxLayer: makeSandboxLayerFromHandle(handle),
-                    worktreePath: handle.worktreePath,
-                  })),
-                ),
+                createNoSandboxHandle(sandboxProvider, hostRepoDir, env),
                 ({ sandboxLayer, worktreePath, handle }) =>
                   makeEffect({
                     hostWorktreePath: hostRepoDir,
@@ -454,11 +487,7 @@ export const WorktreeDockerSandboxFactory = {
                     E | SandboxError,
                     Exclude<R, Sandbox>
                   >,
-                ({ handle }) =>
-                  Effect.tryPromise({
-                    try: () => handle.close(),
-                    catch: () => undefined,
-                  }).pipe(Effect.orDie),
+                ({ handle }) => closeSandboxHandle(handle),
               ).pipe(
                 Effect.map((value) => ({
                   value,
@@ -512,18 +541,14 @@ export const WorktreeDockerSandboxFactory = {
                     makeEffect({
                       hostWorktreePath: hostRepoDir,
                       sandboxRepoPath: worktreePath,
-                      bindMountHandle: handle as BindMountSandboxHandle,
+                      bindMountHandle: getBindMountHandle(handle),
                     }).pipe(Effect.provide(sandboxLayer)) as Effect.Effect<
                       A,
                       E | SandboxError,
                       Exclude<R, Sandbox>
                     >,
                   // Release
-                  ({ handle }) =>
-                    Effect.tryPromise({
-                      try: () => handle.close(),
-                      catch: () => undefined,
-                    }).pipe(Effect.orDie),
+                  ({ handle }) => closeSandboxHandle(handle),
                 ).pipe(
                   Effect.map((value) => ({
                     value,
@@ -546,7 +571,12 @@ export const WorktreeDockerSandboxFactory = {
                 (copyPaths && copyPaths.length > 0
                   ? display.spinner(
                       "Copying to worktree",
-                      copyToWorktree(copyPaths, hostRepoDir, worktreeInfo.path, timeouts?.copyToWorktreeMs),
+                      copyToWorktree(
+                        copyPaths,
+                        hostRepoDir,
+                        worktreeInfo.path,
+                        timeouts?.copyToWorktreeMs,
+                      ),
                     )
                   : Effect.succeed(undefined)
                 ).pipe(Effect.map(() => worktreeInfo)),
@@ -562,23 +592,21 @@ export const WorktreeDockerSandboxFactory = {
               ),
               Effect.flatMap((worktreeInfo) => {
                 if (sandboxProvider.tag === "none") {
-                  return Effect.tryPromise({
-                    try: () =>
-                      sandboxProvider.create({
-                        worktreePath: worktreeInfo.path,
-                        env,
-                      }),
-                    catch: (e) =>
-                      new WorktreeError({
-                        message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
-                      }),
-                  }).pipe(
+                  return createNoSandboxHandle(
+                    sandboxProvider,
+                    worktreeInfo.path,
+                    env,
+                  ).pipe(
                     Effect.map(
-                      (handle): AcquireResult => ({
+                      ({
+                        handle,
+                        sandboxLayer,
+                        worktreePath,
+                      }): AcquireResult => ({
                         worktreeInfo,
                         handle,
-                        sandboxLayer: makeSandboxLayerFromHandle(handle),
-                        worktreePath: handle.worktreePath,
+                        sandboxLayer,
+                        worktreePath,
                       }),
                     ),
                   );
@@ -640,7 +668,7 @@ export const WorktreeDockerSandboxFactory = {
               makeEffect({
                 hostWorktreePath: worktreeInfo.path,
                 sandboxRepoPath: worktreePath,
-                bindMountHandle: handle as BindMountSandboxHandle,
+                bindMountHandle: getBindMountHandle(handle),
               }).pipe(Effect.provide(sandboxLayer)) as Effect.Effect<
                 A,
                 E | SandboxError,
@@ -648,10 +676,7 @@ export const WorktreeDockerSandboxFactory = {
               >,
             // Release: close provider handle, then remove/preserve worktree based on dirty state.
             ({ worktreeInfo, handle }, exit) =>
-              Effect.tryPromise({
-                try: () => handle.close(),
-                catch: () => undefined,
-              }).pipe(
+              closeSandboxHandle(handle).pipe(
                 Effect.andThen(cleanupWorktree(worktreeInfo.path, exit)),
                 Effect.tap((p) => {
                   preservedWorktreePath = p;
