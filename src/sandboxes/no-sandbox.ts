@@ -3,11 +3,12 @@
  *
  * Usage:
  *   import { noSandbox } from "sandcastle/sandboxes/no-sandbox";
+ *   await run({ agent: claudeCode("claude-opus-4-7"), sandbox: noSandbox(), prompt: "..." });
  *   await interactive({ agent: claudeCode("claude-opus-4-7"), sandbox: noSandbox() });
  *
- * Only valid for `interactive()` — not accepted by `run()` or `createSandbox()`.
- * Does not pass `--dangerously-skip-permissions` to the agent — the user manages
- * permissions themselves.
+ * Accepted by top-level `run()` and `interactive()`, plus `wt.interactive()`.
+ * `interactive()` does not pass `--dangerously-skip-permissions` to the agent;
+ * AFK entrypoints do.
  */
 
 import { spawn, type StdioOptions } from "node:child_process";

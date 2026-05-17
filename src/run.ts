@@ -22,7 +22,10 @@ import {
   WorktreeDockerSandboxFactory,
   SandboxConfig,
 } from "./SandboxFactory.js";
-import type { SandboxProvider, BranchStrategy } from "./SandboxProvider.js";
+import type {
+  AnySandboxProvider,
+  BranchStrategy,
+} from "./SandboxProvider.js";
 import { resolveEnv } from "./EnvResolver.js";
 import { formatErrorMessage } from "./ErrorHandler.js";
 import type { SandboxError } from "./errors.js";
@@ -207,8 +210,8 @@ export interface Timeouts {
 export interface RunOptions {
   /** Agent provider to use (e.g. claudeCode("claude-opus-4-7")) */
   readonly agent: AgentProvider;
-  /** Sandbox provider (e.g. docker({ imageName: "sandcastle:myrepo" })). */
-  readonly sandbox: SandboxProvider;
+  /** Sandbox provider (e.g. docker({ imageName: "sandcastle:myrepo" }), noSandbox()). */
+  readonly sandbox: AnySandboxProvider;
   /**
    * Host repo directory. Replaces `process.cwd()` as the anchor for
    * `.sandcastle/worktrees/`, `.sandcastle/.env`, `.sandcastle/logs/`,

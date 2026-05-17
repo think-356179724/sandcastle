@@ -65,16 +65,16 @@ await run({
 
 ## Sandbox Providers
 
-Sandcastle uses a `SandboxProvider` to create isolated environments. The `sandbox` option on `run()` and `createSandbox()` accepts any provider. A no-sandbox option is also available for `interactive()` and `wt.interactive()`. Built-in providers:
+Sandcastle uses sandbox providers to control where the agent runs. Top-level `run()` accepts any provider, including `noSandbox()` for host execution. `createSandbox()` and `wt.createSandbox()` remain sandbox-only. Built-in providers:
 
 | Provider   | Import path                                | Type       | Accepted by                                   |
 | ---------- | ------------------------------------------ | ---------- | --------------------------------------------- |
 | Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`   |
 | Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`   |
 | Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`   |
-| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `interactive()`, `wt.interactive()` (default) |
+| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `interactive()`, `wt.interactive()` (default) |
 
-Worktree methods (`wt.run()`, `wt.interactive()`, `wt.createSandbox()`) accept the same providers as their top-level counterparts. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
+`wt.run()` and `wt.createSandbox()` still require sandboxed providers. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
 
 ```typescript
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -89,7 +89,13 @@ await run({
   prompt: "...",
 });
 
-// No-sandbox runs the agent directly on the host — interactive() only:
+// No-sandbox runs the agent directly on the host:
+await run({
+  agent: claudeCode("claude-opus-4-7"),
+  sandbox: noSandbox(),
+  prompt: "...",
+});
+
 await interactive({
   agent: claudeCode("claude-opus-4-7"),
   sandbox: noSandbox(),
@@ -708,7 +714,7 @@ Removes the Podman image.
 | Option               | Type               | Default                       | Description                                                                                                                                                     |
 | -------------------- | ------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`              | AgentProvider      | —                             | **Required.** Agent provider (e.g. `claudeCode("claude-opus-4-7")`, `pi("claude-sonnet-4-6")`, `codex("gpt-5.4-mini")`, `opencode("opencode/big-pickle")`)      |
-| `sandbox`            | SandboxProvider    | —                             | **Required.** Sandbox provider (e.g. `docker()`, `podman()`, `docker({ imageName: "sandcastle:local" })`)                                                       |
+| `sandbox`            | AnySandboxProvider | —                             | **Required.** Sandbox provider (e.g. `docker()`, `podman()`, `docker({ imageName: "sandcastle:local" })`, `noSandbox()`)                                         |
 | `cwd`                | string             | `process.cwd()`               | Host repo directory — anchor for `.sandcastle/` artifacts and git operations. Relative paths resolve against `process.cwd()`.                                   |
 | `prompt`             | string             | —                             | Inline prompt (mutually exclusive with `promptFile`)                                                                                                            |
 | `promptFile`         | string             | —                             | Path to prompt file (mutually exclusive with `prompt`). Resolves against `process.cwd()`, **not** `cwd`.                                                        |

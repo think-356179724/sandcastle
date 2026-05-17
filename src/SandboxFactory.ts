@@ -17,7 +17,7 @@ import * as WorktreeManager from "./WorktreeManager.js";
 import { copyToWorktree } from "./CopyToWorktree.js";
 import { Display } from "./Display.js";
 import type {
-  SandboxProvider,
+  AnySandboxProvider,
   BranchStrategy,
   BindMountSandboxProvider,
   BindMountSandboxHandle,
@@ -180,7 +180,7 @@ export class SandboxConfig extends Context.Tag("SandboxConfig")<
     /** When specified, the run name is included in the auto-generated branch and worktree names. */
     readonly name?: string;
     /** Sandbox provider — delegates sandbox lifecycle to the provider. */
-    readonly sandboxProvider: SandboxProvider;
+    readonly sandboxProvider: AnySandboxProvider;
     /** Branch strategy — controls how the agent's changes relate to branches. */
     readonly branchStrategy: BranchStrategy;
     /** Lifecycle hooks grouped by execution location (host or sandbox). */
@@ -298,7 +298,7 @@ export const resolveGitMounts = (
 /** Shared acquire result type for the worktree-mode acquireUseRelease. */
 interface AcquireResult {
   worktreeInfo: WorktreeManager.WorktreeInfo;
-  handle: BindMountSandboxHandle | IsolatedSandboxHandle;
+  handle: BindMountSandboxHandle | IsolatedSandboxHandle | NoSandboxHandle;
   sandboxLayer: Layer.Layer<Sandbox>;
   worktreePath: string;
 }
@@ -425,6 +425,48 @@ export const WorktreeDockerSandboxFactory = {
           }
 
           if (isHeadMode) {
+            if (sandboxProvider.tag === "none") {
+              // Head mode with no sandbox: run directly in the host repo.
+              return Effect.acquireUseRelease(
+                Effect.tryPromise({
+                  try: () =>
+                    sandboxProvider.create({
+                      worktreePath: hostRepoDir,
+                      env,
+                    }),
+                  catch: (e) =>
+                    new WorktreeError({
+                      message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
+                    }),
+                }).pipe(
+                  Effect.map((handle) => ({
+                    handle,
+                    sandboxLayer: makeSandboxLayerFromHandle(handle),
+                    worktreePath: handle.worktreePath,
+                  })),
+                ),
+                ({ sandboxLayer, worktreePath, handle }) =>
+                  makeEffect({
+                    hostWorktreePath: hostRepoDir,
+                    sandboxRepoPath: worktreePath,
+                  }).pipe(Effect.provide(sandboxLayer)) as Effect.Effect<
+                    A,
+                    E | SandboxError,
+                    Exclude<R, Sandbox>
+                  >,
+                ({ handle }) =>
+                  Effect.tryPromise({
+                    try: () => handle.close(),
+                    catch: () => undefined,
+                  }).pipe(Effect.orDie),
+              ).pipe(
+                Effect.map((value) => ({
+                  value,
+                  preservedWorktreePath: undefined,
+                })),
+              );
+            }
+
             // Head mode: bind-mount host directory directly, no worktree
             const gitPath = join(hostRepoDir, ".git");
             return (
@@ -519,6 +561,29 @@ export const WorktreeDockerSandboxFactory = {
                   : Effect.void,
               ),
               Effect.flatMap((worktreeInfo) => {
+                if (sandboxProvider.tag === "none") {
+                  return Effect.tryPromise({
+                    try: () =>
+                      sandboxProvider.create({
+                        worktreePath: worktreeInfo.path,
+                        env,
+                      }),
+                    catch: (e) =>
+                      new WorktreeError({
+                        message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
+                      }),
+                  }).pipe(
+                    Effect.map(
+                      (handle): AcquireResult => ({
+                        worktreeInfo,
+                        handle,
+                        sandboxLayer: makeSandboxLayerFromHandle(handle),
+                        worktreePath: handle.worktreePath,
+                      }),
+                    ),
+                  );
+                }
+
                 const gitPath = join(hostRepoDir, ".git");
                 return resolveGitMounts(gitPath).pipe(
                   Effect.provideService(FileSystem.FileSystem, fileSystem),

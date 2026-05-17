@@ -289,9 +289,9 @@ export type BranchStrategy =
   | NoSandboxBranchStrategy;
 
 /**
- * A sandbox provider — the pluggable unit that `run()` and `createSandbox()` accept.
+ * A sandbox provider — the pluggable unit that sandboxed AFK entrypoints accept.
  * Tagged for internal dispatch: "bind-mount" or "isolated".
- * Does not include `NoSandboxProvider` — that is only valid for `interactive()`.
+ * Does not include `NoSandboxProvider` so existing sandbox-only APIs remain unchanged.
  */
 export type SandboxProvider =
   | BindMountSandboxProvider
@@ -299,7 +299,7 @@ export type SandboxProvider =
 
 /**
  * Any sandbox provider, including no-sandbox.
- * This is the union accepted by `interactive()`.
+ * This is the union accepted by `interactive()` and top-level `run()`.
  */
 export type AnySandboxProvider =
   | BindMountSandboxProvider
