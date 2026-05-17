@@ -62,6 +62,7 @@ const defaultUidBuildArgs = (): Record<string, string> => {
 // --- Config directory check ---
 
 const CONFIG_DIR = ".sandcastle";
+const NO_SANDBOX_HINT = "runs the agent directly on the host — no isolation";
 
 const requireConfigDir = (
   cwd: string,
@@ -79,6 +80,23 @@ const requireConfigDir = (
       );
     }
   });
+
+const buildSelectedContainerImage = (
+  sandboxProvider: Extract<SandboxProviderEntry, { kind: "container" }>,
+  imageName: string,
+  containerfileDir: string,
+): Effect.Effect<void, Error> => {
+  switch (sandboxProvider.name) {
+    case "podman":
+      return podmanBuildImage(imageName, containerfileDir);
+    case "docker":
+      return buildImage(imageName, containerfileDir, {
+        buildArgs: defaultUidBuildArgs(),
+      });
+  }
+
+  return Effect.die(`Unsupported sandbox provider: ${sandboxProvider.name}`);
+};
 
 // --- Init command ---
 
@@ -193,6 +211,7 @@ const initCommand = Command.make(
             options: sandboxProviders.map((p) => ({
               value: p.name,
               label: p.label,
+              ...(p.kind === "none" ? { hint: NO_SANDBOX_HINT } : {}),
             })),
           }),
         );
@@ -325,42 +344,45 @@ const initCommand = Command.make(
         ),
       );
 
-      // Prompt user before building image
+      // Prompt user before building an image for container providers only
       const providerLabel = selectedSandboxProvider.label;
-      const shouldBuild = yield* Effect.promise(() =>
-        clack.confirm({
-          message: `Build the default ${providerLabel} image now?`,
-          initialValue: true,
-        }),
-      );
+      if (selectedSandboxProvider.kind === "container") {
+        const shouldBuild = yield* Effect.promise(() =>
+          clack.confirm({
+            message: `Build the default ${providerLabel} image now?`,
+            initialValue: true,
+          }),
+        );
 
-      if (shouldBuild === true) {
-        const containerfileDir = join(cwd, CONFIG_DIR);
-        if (selectedSandboxProvider.name === "podman") {
+        if (shouldBuild === true) {
+          const containerfileDir = join(cwd, CONFIG_DIR);
           yield* d.spinner(
             `Building ${providerLabel} image '${imageName}'...`,
-            podmanBuildImage(imageName, containerfileDir),
+            buildSelectedContainerImage(
+              selectedSandboxProvider,
+              imageName,
+              containerfileDir,
+            ),
+          );
+          yield* d.status(
+            "Init complete! Image built successfully.",
+            "success",
           );
         } else {
-          yield* d.spinner(
-            `Building ${providerLabel} image '${imageName}'...`,
-            buildImage(imageName, containerfileDir, {
-              buildArgs: defaultUidBuildArgs(),
-            }),
+          yield* d.status(
+            `Init complete! Run \`sandcastle ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
+            "success",
           );
         }
-        yield* d.status("Init complete! Image built successfully.", "success");
       } else {
-        yield* d.status(
-          `Init complete! Run \`sandcastle ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
-          "success",
-        );
+        yield* d.status("Init complete!", "success");
       }
 
       // Show template-specific next steps
       const nextSteps = getNextStepsLines(
         selectedTemplate,
         scaffoldResult.mainFilename,
+        selectedSandboxProvider,
       );
       for (const [i, line] of nextSteps.entries()) {
         yield* d.text(i === 0 ? line : styleText("dim", line));
