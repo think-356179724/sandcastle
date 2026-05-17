@@ -65,18 +65,24 @@ await run({
 
 ## Sandbox Providers
 
-Sandcastle uses sandbox providers to control where the agent runs. Top-level `run()` accepts any provider, including `noSandbox()` for host execution. `createSandbox()` and `wt.createSandbox()` remain sandbox-only. Built-in providers:
+Sandcastle uses sandbox providers to control where the agent runs. Top-level `run()` and `createSandbox()` accept any provider, including `noSandbox()` for host execution. `wt.createSandbox()` remains sandbox-only. Built-in providers:
 
-| Provider   | Import path                                | Type       | Accepted by                                            |
-| ---------- | ------------------------------------------ | ---------- | ------------------------------------------------------ |
-| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`            |
-| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`            |
-| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`            |
-| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `interactive()`, `wt.interactive()` (default) |
+| Provider   | Import path                                | Type       | Accepted by                                                               |
+| ---------- | ------------------------------------------ | ---------- | ------------------------------------------------------------------------- |
+| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`                               |
+| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`                               |
+| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`                               |
+| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `createSandbox()`, `interactive()`, `wt.interactive()` (default) |
 
 `wt.run()` and `wt.createSandbox()` still require sandboxed providers. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
 
 ```typescript
+import {
+  claudeCode,
+  createSandbox,
+  interactive,
+  run,
+} from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { podman } from "@ai-hero/sandcastle/sandboxes/podman";
 import { vercel } from "@ai-hero/sandcastle/sandboxes/vercel";
@@ -93,6 +99,16 @@ await run({
 await run({
   agent: claudeCode("claude-opus-4-7"),
   sandbox: noSandbox(),
+  prompt: "...",
+});
+
+await using sandbox = await createSandbox({
+  branch: "agent/fix-42",
+  sandbox: noSandbox(),
+});
+
+await sandbox.run({
+  agent: claudeCode("claude-opus-4-7"),
   prompt: "...",
 });
 
@@ -313,14 +329,14 @@ if (closeResult.preservedWorktreePath) {
 
 #### `CreateSandboxOptions`
 
-| Option           | Type            | Default         | Description                                                          |
-| ---------------- | --------------- | --------------- | -------------------------------------------------------------------- |
-| `branch`         | string          | —               | **Required.** Explicit branch for the sandbox                        |
-| `sandbox`        | SandboxProvider | —               | **Required.** Sandbox provider (e.g. `docker()`, `podman()`)         |
-| `cwd`            | string          | `process.cwd()` | Host repo directory — relative paths resolve against `process.cwd()` |
-| `hooks`          | SandboxHooks    | —               | Lifecycle hooks (`host.*`, `sandbox.*`) — run once at creation time  |
-| `copyToWorktree` | string[]        | —               | Host-relative file paths to copy into the sandbox at creation time   |
-| `timeouts`       | Timeouts        | —               | Override default timeouts (e.g. `{ copyToWorktreeMs: 120_000 }`)     |
+| Option           | Type               | Default         | Description                                                                 |
+| ---------------- | ------------------ | --------------- | --------------------------------------------------------------------------- |
+| `branch`         | string             | —               | **Required.** Explicit branch for the sandbox                               |
+| `sandbox`        | AnySandboxProvider | —               | **Required.** Sandbox provider (e.g. `docker()`, `podman()`, `noSandbox()`) |
+| `cwd`            | string             | `process.cwd()` | Host repo directory — relative paths resolve against `process.cwd()`        |
+| `hooks`          | SandboxHooks       | —               | Lifecycle hooks (`host.*`, `sandbox.*`) — run once at creation time         |
+| `copyToWorktree` | string[]           | —               | Host-relative file paths to copy into the sandbox at creation time          |
+| `timeouts`       | Timeouts           | —               | Override default timeouts (e.g. `{ copyToWorktreeMs: 120_000 }`)            |
 
 #### `Sandbox`
 
@@ -456,7 +472,7 @@ await sandbox.close();
 | Option               | Type                   | Default | Description                                                                                                                         |
 | -------------------- | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`              | AgentProvider          | —       | **Required.** Agent provider                                                                                                        |
-| `sandbox`            | SandboxProvider        | —       | **Required.** Sandbox provider (AFK agents must be sandboxed)                                                                       |
+| `sandbox`            | SandboxProvider        | —       | **Required.** Sandbox provider (worktree AFK remains sandbox-only)                                                                  |
 | `prompt`             | string                 | —       | Inline prompt (mutually exclusive with `promptFile`)                                                                                |
 | `promptFile`         | string                 | —       | Path to prompt file                                                                                                                 |
 | `maxIterations`      | number                 | 1       | Maximum iterations to run                                                                                                           |

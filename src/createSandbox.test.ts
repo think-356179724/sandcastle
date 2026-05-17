@@ -12,7 +12,9 @@ import { Sandbox } from "./SandboxFactory.js";
 import {
   createBindMountSandboxProvider,
   createIsolatedSandboxProvider,
+  type NoSandboxProvider,
 } from "./SandboxProvider.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 import { makeLocalSandboxLayer } from "./testSandbox.js";
 
@@ -648,6 +650,90 @@ describe("createSandbox", () => {
       expect(closeCallCount).toBe(1);
       await rm(hostDir, { recursive: true, force: true });
       await rm(gitTmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts noSandbox() and reuses the same host-backed sandbox across runs", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+
+    let createCallCount = 0;
+    const agentCommands: string[] = [];
+    const baseProvider = noSandbox();
+
+    const spyNoSandboxProvider: NoSandboxProvider = {
+      ...baseProvider,
+      create: async (options) => {
+        createCallCount++;
+        const handle = await baseProvider.create(options);
+
+        return {
+          ...handle,
+          exec: async (command, execOptions) => {
+            if (command.startsWith("claude ")) {
+              agentCommands.push(command);
+              const cwd = execOptions?.cwd ?? handle.worktreePath;
+              const runNumber = agentCommands.length;
+              const fname = `no-sandbox-file-${runNumber}.txt`;
+              await writeFile(join(cwd, fname), `content ${runNumber}`);
+              await execAsync(`git add "${fname}"`, { cwd });
+              await execAsync(
+                `git commit -m "no sandbox commit ${runNumber}"`,
+                {
+                  cwd,
+                },
+              );
+              const output = toStreamJson(`done run ${runNumber}`);
+              if (execOptions?.onLine) {
+                for (const line of output.split("\n")) execOptions.onLine(line);
+              }
+              return { stdout: output, stderr: "", exitCode: 0 };
+            }
+
+            return handle.exec(command, execOptions);
+          },
+        };
+      },
+    };
+
+    const sandbox = await createSandbox({
+      branch: "test-no-sandbox-reuse",
+      sandbox: spyNoSandboxProvider,
+      cwd: hostDir,
+    });
+
+    try {
+      const result1 = await sandbox.run({
+        agent: testProvider,
+        prompt: "first run",
+        maxIterations: 1,
+      });
+      const result2 = await sandbox.run({
+        agent: testProvider,
+        prompt: "second run",
+        maxIterations: 1,
+      });
+
+      expect(createCallCount).toBe(1);
+      expect(result1.commits.length).toBeGreaterThanOrEqual(1);
+      expect(result2.commits.length).toBeGreaterThanOrEqual(1);
+      expect(agentCommands).toHaveLength(2);
+      expect(
+        agentCommands.every((command) =>
+          command.includes("--dangerously-skip-permissions"),
+        ),
+      ).toBe(true);
+
+      const { stdout: log } = await execAsync(
+        "git log --oneline test-no-sandbox-reuse",
+        { cwd: hostDir },
+      );
+      expect(log).toContain("no sandbox commit 1");
+      expect(log).toContain("no sandbox commit 2");
+    } finally {
+      await sandbox.close();
+      await rm(hostDir, { recursive: true, force: true });
     }
   });
 

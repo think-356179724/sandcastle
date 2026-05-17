@@ -37,12 +37,15 @@ import {
   Sandbox as SandboxTag,
   SandboxFactory,
   SANDBOX_REPO_DIR,
+  makeSandboxLayerFromHandle,
   resolveGitMounts,
 } from "./SandboxFactory.js";
 import type {
+  AnySandboxProvider,
   SandboxProvider,
   BindMountSandboxHandle,
   IsolatedSandboxHandle,
+  NoSandboxHandle,
 } from "./SandboxProvider.js";
 import { startSandbox } from "./startSandbox.js";
 import { syncOut } from "./syncOut.js";
@@ -59,8 +62,8 @@ export interface CreateSandboxOptions {
    * already exists. Defaults to `HEAD`.
    */
   readonly baseBranch?: string;
-  /** Sandbox provider (e.g. docker({ imageName: "sandcastle:myrepo" })). */
-  readonly sandbox: SandboxProvider;
+  /** Sandbox provider (e.g. docker({ imageName: "sandcastle:myrepo" }), noSandbox()). */
+  readonly sandbox: AnySandboxProvider;
   /**
    * Host repo directory. Replaces `process.cwd()` as the anchor for
    * `.sandcastle/worktrees/`, `.sandcastle/.env`, and git operations.
@@ -188,6 +191,7 @@ interface SandboxHandleContext {
   readonly providerHandle:
     | BindMountSandboxHandle
     | IsolatedSandboxHandle
+    | NoSandboxHandle
     | undefined;
   readonly applyToHost: () => Effect.Effect<void, any>;
 }
@@ -511,6 +515,23 @@ const makeIsolatedApplyToHost = (
     );
 };
 
+const createNoSandboxHandle = async (
+  worktreePath: string,
+  sandboxProvider: Extract<AnySandboxProvider, { tag: "none" }>,
+  env: Record<string, string>,
+) => {
+  const handle = await sandboxProvider.create({
+    worktreePath,
+    env,
+  });
+
+  return {
+    handle,
+    sandboxLayer: makeSandboxLayerFromHandle(handle),
+    worktreePath: handle.worktreePath,
+  };
+};
+
 /** @internal Options for createSandboxFromWorktree — used by worktree.createSandbox(). */
 export interface CreateSandboxFromWorktreeOptions {
   readonly branch: string;
@@ -742,9 +763,10 @@ export const createSandbox = async (
   let providerHandle:
     | BindMountSandboxHandle
     | IsolatedSandboxHandle
+    | NoSandboxHandle
     | undefined;
-  let sandboxLayer: Layer.Layer<SandboxTag>;
-  let sandboxRepoDir: string;
+  let sandboxLayer!: Layer.Layer<SandboxTag>;
+  let sandboxRepoDir!: string;
   const isIsolated = options.sandbox.tag === "isolated";
 
   if (isTestMode) {
@@ -771,6 +793,16 @@ export const createSandbox = async (
         env,
         copyPaths: options.copyToWorktree,
       });
+    } else if (provider.tag === "none") {
+      const startResult = await createNoSandboxHandle(
+        worktreePath,
+        provider,
+        env,
+      );
+      providerHandle = startResult.handle;
+      sandboxLayer = startResult.sandboxLayer;
+      sandboxRepoDir = startResult.worktreePath;
+      startEffect = undefined;
     } else {
       startEffect = resolveGitMounts(join(hostRepoDir, ".git")).pipe(
         Effect.provide(NodeFileSystem.layer),
@@ -803,11 +835,13 @@ export const createSandbox = async (
       );
     }
 
-    const startResult = await Effect.runPromise(startEffect);
+    if (startEffect) {
+      const startResult = await Effect.runPromise(startEffect);
 
-    providerHandle = startResult.handle;
-    sandboxLayer = startResult.sandboxLayer;
-    sandboxRepoDir = startResult.worktreePath;
+      providerHandle = startResult.handle;
+      sandboxLayer = startResult.sandboxLayer;
+      sandboxRepoDir = startResult.worktreePath;
+    }
   }
 
   // 4. Run onSandboxReady hooks (sandbox-side and host-side in parallel)
